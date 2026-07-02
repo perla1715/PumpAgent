@@ -31,8 +31,12 @@ from pumpagent.runtime.modules.market_efficiency import (
     MarketEfficiencyError,
     add_market_efficiency_evidence,
     build_market_efficiency_evidence,
+    refine_market_efficiency_evidence,
 )
-from pumpagent.runtime.modules.perception import add_observation_package
+from pumpagent.runtime.modules.perception import (
+    add_observation_package,
+    add_perception_evidence,
+)
 from pumpagent.runtime.modules.structure import add_structural_evidence
 
 
@@ -51,6 +55,19 @@ def make_event_with_observation_package() -> RuntimeEvent:
 
 def make_event_with_structural_evidence() -> RuntimeEvent:
     return add_structural_evidence(make_event_with_observation_package())
+
+
+def make_event_with_perception_evidence() -> RuntimeEvent:
+    event = RuntimeEvent(
+        event_id="runtime-evt-1",
+        schema_version="1.0",
+        cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        symbol="BTCUSDT",
+        exchange="binance",
+        timeframe="1m",
+    )
+    event = add_market_snapshot_from_fixture(event, FIXTURE)
+    return add_perception_evidence(event)
 
 
 def make_observation_package(
@@ -82,6 +99,52 @@ def make_observation_package(
 
 
 class MarketEfficiencyEngineTests(unittest.TestCase):
+    def test_market_efficiency_refines_perception_evidence(self) -> None:
+        event = make_event_with_perception_evidence()
+
+        evidence = refine_market_efficiency_evidence(
+            event.market_efficiency_evidence
+        )
+
+        self.assertIs(evidence, event.market_efficiency_evidence)
+        self.assertEqual(evidence.event_id, event.event_id)
+        self.assertEqual(evidence.efficiency_status, "not_assessed")
+
+    def test_market_efficiency_can_run_after_perception_without_touching_other_sections(
+        self,
+    ) -> None:
+        event = make_event_with_perception_evidence()
+        snapshot_before = event.market_snapshot.to_dict()
+        structure_before = event.structural_evidence.to_dict()
+
+        updated = add_market_efficiency_evidence(event)
+
+        self.assertIsNot(updated, event)
+        self.assertEqual(updated.market_snapshot.to_dict(), snapshot_before)
+        self.assertIsNone(updated.observation_package)
+        self.assertEqual(updated.structural_evidence.to_dict(), structure_before)
+        self.assertIs(
+            updated.market_efficiency_evidence,
+            event.market_efficiency_evidence,
+        )
+        self.assertIsNone(updated.hypothesis_package)
+        self.assertIsNone(updated.agent_state)
+        self.assertIsNone(updated.scenario_probability)
+        self.assertIsNone(updated.confidence_assessment)
+        self.assertIsNone(updated.decision_alert)
+        self.assertIsNone(updated.learning_metadata)
+
+    def test_market_efficiency_rejects_misaligned_perception_evidence(
+        self,
+    ) -> None:
+        event = make_event_with_perception_evidence()
+
+        with self.assertRaisesRegex(MarketEfficiencyError, "event_id"):
+            refine_market_efficiency_evidence(
+                event.market_efficiency_evidence,
+                runtime_event_id="different-runtime-event",
+            )
+
     def test_market_efficiency_reads_observation_package(self) -> None:
         event = make_event_with_observation_package()
 

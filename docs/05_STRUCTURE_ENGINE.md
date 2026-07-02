@@ -2,16 +2,26 @@
 
 ## Status
 
-Planned next Runtime alignment milestone.
+Implemented expansion skeleton.
 
-This document describes the intended Structure layer. It should not be read as
-part of the currently implemented Runtime Core milestone.
+Structure Engine currently validates Perception-produced `StructuralEvidence`
+without adding market interpretation.
+
+It is not part of the current Runtime Orchestrator flow.
+
+Advanced structural reasoning remains a future milestone.
 
 ---
 
 ## Purpose
 
-The planned Structure Engine interprets the visual structure of the market.
+The current Structure Engine skeleton protects the structural evidence boundary.
+
+It validates that structural evidence belongs to the current Runtime event.
+
+It does not interpret the visual structure of the market yet.
+
+Future versions may study how price behaves.
 
 It does not study participation.
 
@@ -21,9 +31,25 @@ Its responsibility is to understand whether the current structure is becoming st
 
 ---
 
-## Structural Elements
+## Current Responsibilities
 
-The planned engine evaluates:
+The current skeleton:
+
+- reads `StructuralEvidence`;
+- verifies Runtime event identity;
+- returns evidence unchanged;
+- remains deterministic;
+- remains side-effect free;
+- does not modify MarketSnapshot;
+- does not modify MarketEfficiencyEvidence;
+- does not create hypotheses, states, probabilities, confidence, decisions, or
+  alerts.
+
+---
+
+## Future Structural Elements
+
+Future versions may evaluate:
 
 - EMA structure
 - Fibonacci levels
@@ -40,7 +66,7 @@ The planned engine evaluates:
 
 ---
 
-## Structural Questions
+## Future Structural Questions
 
 Instead of asking:
 
@@ -56,7 +82,7 @@ The engine asks:
 
 ---
 
-## Structural Events
+## Future Structural Events
 
 Examples include:
 
@@ -73,8 +99,8 @@ Examples include:
 
 ## Output
 
-The planned engine produces structural evidence.
+The current skeleton preserves structural evidence.
 
 It never makes trading decisions.
 
-Its evidence will be passed to the Hypothesis Engine.
+Its evidence remains available to the Hypothesis Engine.

@@ -1,6 +1,6 @@
 """Structure Engine v0.2.
 
-Structure produces objective structural evidence from normalized observations.
+Structure produces or refines objective structural evidence.
 It remains evidence-only and does not own downstream Runtime reasoning.
 """
 
@@ -82,8 +82,31 @@ def build_structural_evidence(
     )
 
 
+def refine_structural_evidence(
+    evidence: StructuralEvidence,
+    *,
+    runtime_event_id: str | None = None,
+) -> StructuralEvidence:
+    """Validate Perception-produced StructuralEvidence without interpretation."""
+
+    event_id = runtime_event_id or evidence.event_id
+    if evidence.event_id != event_id:
+        raise StructureError(
+            "StructuralEvidence.event_id must match the RuntimeEvent.event_id."
+        )
+
+    return evidence
+
+
 def add_structural_evidence(event: RuntimeEvent) -> RuntimeEvent:
     """Return a new event with only structural_evidence added."""
+
+    if event.structural_evidence is not None:
+        evidence = refine_structural_evidence(
+            event.structural_evidence,
+            runtime_event_id=event.event_id,
+        )
+        return event.with_sections(structural_evidence=evidence)
 
     if event.observation_package is None:
         raise StructureError("RuntimeEvent.observation_package is required.")

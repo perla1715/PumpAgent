@@ -59,6 +59,10 @@ MarketSnapshot
 
 ↓
 
+Perception Engine
+
+↓
+
 Hypothesis Engine
 
 ↓
@@ -83,6 +87,7 @@ Decision / Alert
 
 Implemented Runtime Core milestone:
 
+- Perception Engine
 - Hypothesis Engine
 - Agent State Engine
 - Scenario Probability Engine
@@ -91,9 +96,9 @@ Implemented Runtime Core milestone:
 
 Planned next Runtime alignment milestones:
 
-- Perception Engine
-- Structure Engine
-- Market Efficiency Engine
+- Advanced Perception reasoning
+- Advanced Structure reasoning
+- Advanced Market Efficiency reasoning
 
 Learning Memory is not part of the current Runtime Orchestrator path.
 
@@ -142,6 +147,12 @@ Implemented and tested foundations include:
 
 - Runtime v0.1 domain contracts and deterministic reasoning pipeline through
   Decision / Alert;
+- Perception Engine v0.1 skeleton producing objective structural and market
+  efficiency evidence;
+- Structure Engine expansion skeleton validating Perception-produced structural
+  evidence without interpretation;
+- Market Efficiency Engine expansion skeleton validating Perception-produced
+  market efficiency evidence without interpretation;
 - Live Data v0.2 contracts, validation, quality translation, fixture source,
   and fixture flow;
 - Bybit public REST Kline transport as a strictly scoped raw acquisition

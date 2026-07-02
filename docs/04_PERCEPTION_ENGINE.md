@@ -2,47 +2,65 @@
 
 ## Status
 
-Planned next Runtime alignment milestone.
+Implemented skeleton.
 
-This document describes the intended Perception layer. It should not be read as
-part of the currently implemented Runtime Core milestone.
+Perception Engine v0.1 is implemented as a Runtime-safe boundary between
+`MarketSnapshot` and the Hypothesis Engine.
+
+It is a contract and evidence milestone only.
 
 ---
 
 ## Purpose
 
-The planned Perception Engine is the sensory system of PumpAgent.
+The Perception Engine is the first Runtime layer after `MarketSnapshot`.
 
 It does not predict.
 
-It does not analyze.
+It does not interpret the market.
 
-It only observes the market exactly as it is.
+It extracts objective evidence from market data so downstream Runtime modules
+can reason without depending on exchange, transport, bridge, validation,
+normalizer, or Live Data layers.
 
-The quality of every future decision depends on the quality of perception.
+The quality of every future decision depends on the quality and neutrality of
+perception.
 
 ---
 
 ## Responsibilities
 
-The planned engine collects and normalizes observations such as:
+Perception Engine v0.1 reads only:
+
+- MarketSnapshot
+
+It currently produces:
+
+- StructuralEvidence
+- MarketEfficiencyEvidence
+
+The evidence is intentionally simple and objective.
+
+Examples of extracted facts include:
 
 - Price
 - Volume
-- Open Interest
-- Aggregated Open Interest
-- Funding
+- OHLCV availability
+- Candle count
+- Latest close
+- Observed high
+- Observed low
+- High / low range
+- Open Interest availability
+- Funding availability
 - CVD
 - Liquidations
-- Order Book
-- Trades
-- EMA
-- Bollinger Bands
-- Fibonacci Levels
+- Missing participation metrics
+- Data quality context
 
 No conclusions are made here.
 
-Everything is stored as observations.
+Everything remains evidence.
 
 ---
 
@@ -68,24 +86,39 @@ Only facts.
 
 ---
 
-## Continuous Observation
+## Runtime Boundaries
 
-In the future live Runtime, the engine must continuously process new market
-updates.
+Perception Engine v0.1 must not:
 
-Every new candle updates the current observations.
+- create hypotheses;
+- classify Agent State;
+- assign scenario probabilities;
+- calculate confidence;
+- generate decisions;
+- generate alerts;
+- access Learning Memory;
+- access Research Plane;
+- access exchange APIs;
+- access transport, bridge, validation, normalizer, or Live Data layers;
+- use trading execution language such as entry, exit, stop loss, take profit,
+  buy, or sell.
 
-Nothing is ignored.
+Perception is deterministic and side-effect free.
 
-Everything becomes evidence for future reasoning.
+The same `MarketSnapshot` should produce the same evidence contracts.
 
 ---
 
 ## Output
 
-The planned output of Perception Engine is a clean observation package.
+The current output of Perception Engine is:
 
-This package will be sent to:
+- StructuralEvidence
+- MarketEfficiencyEvidence
 
-- Structure Engine
-- Market Efficiency Engine
+These contracts are passed to the Hypothesis Engine.
+
+Perception does not currently produce advanced structural interpretation or
+advanced market efficiency interpretation.
+
+Those are future milestones.

@@ -2,27 +2,52 @@
 
 ## Status
 
-Planned next Runtime alignment milestone.
+Implemented expansion skeleton.
 
-This document describes the intended Market Efficiency layer. It should not be
-read as part of the currently implemented Runtime Core milestone.
+Market Efficiency Engine currently validates Perception-produced
+`MarketEfficiencyEvidence` without adding market interpretation.
+
+It is not part of the current Runtime Orchestrator flow.
+
+Advanced market efficiency reasoning remains a future milestone.
 
 ---
 
 ## Purpose
 
-The planned Market Efficiency Engine studies what is happening behind the
-chart.
+The current Market Efficiency Engine skeleton protects the participation
+evidence boundary.
+
+It validates that market efficiency evidence belongs to the current Runtime
+event.
+
+It does not interpret what is happening behind the chart yet.
 
 Price is only the visible result.
 
-The engine measures market participation and capital behavior.
+Future versions may measure market participation and capital behavior.
 
 ---
 
-## Responsibilities
+## Current Responsibilities
 
-The planned engine evaluates:
+The current skeleton:
+
+- reads `MarketEfficiencyEvidence`;
+- verifies Runtime event identity;
+- returns evidence unchanged;
+- remains deterministic;
+- remains side-effect free;
+- does not modify MarketSnapshot;
+- does not modify StructuralEvidence;
+- does not create hypotheses, states, probabilities, confidence, decisions, or
+  alerts.
+
+---
+
+## Future Responsibilities
+
+Future versions may evaluate:
 
 - Open Interest
 - Aggregated Open Interest
@@ -37,7 +62,7 @@ The planned engine evaluates:
 
 ---
 
-## Core Questions
+## Future Core Questions
 
 Instead of asking:
 
@@ -55,9 +80,9 @@ The engine asks:
 
 ---
 
-## Engine Output
+## Future Engine Output
 
-The planned engine produces evidence rather than signals.
+Future versions may produce deeper evidence rather than signals.
 
 Examples:
 
@@ -72,12 +97,10 @@ Examples:
 
 ## Collaboration
 
-The planned Market Efficiency Engine never works alone.
+The current skeleton preserves market efficiency evidence.
 
-Its evidence will be combined with:
+It never makes trading decisions.
 
-- Structure Engine
-
-The final interpretation will be performed by:
+Its evidence remains available to:
 
 - Hypothesis Engine

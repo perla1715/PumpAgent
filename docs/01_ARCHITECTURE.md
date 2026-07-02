@@ -73,6 +73,10 @@ MarketSnapshot
 
 ↓
 
+Perception Engine
+
+↓
+
 Hypothesis Engine
 
 ↓
@@ -111,6 +115,10 @@ MarketSnapshot
 
 ↓
 
+StructuralEvidence + MarketEfficiencyEvidence
+
+↓
+
 HypothesisPackage
 
 ↓
@@ -136,31 +144,42 @@ No Runtime module mutates previous sections.
 
 ---
 
-# Planned Evidence Preparation Milestones
+# Implemented Perception Skeleton
 
-Perception Engine, Structure Engine, and Market Efficiency Engine are planned
-next Runtime alignment milestones around the current Runtime Core.
+Perception Engine v0.1 is implemented as a Runtime-safe skeleton.
 
-They define the intended evidence-preparation path:
+It reads only `MarketSnapshot` and produces objective evidence contracts:
 
 MarketSnapshot
 
 ↓
 
-ObservationPackage
-
-↓
-
 StructuralEvidence + MarketEfficiencyEvidence
 
-These documents and contracts should not be read as the implemented Runtime
-Core milestone unless explicitly connected through an approved implementation
-step.
+Perception v0.1 does not perform market interpretation.
 
-In that planned path, Structure Engine and Market Efficiency Engine are
-parallel evidence producers.
+It does not:
 
-They both receive observations from the Perception Engine.
+- create hypotheses;
+- classify Agent State;
+- assign scenario probabilities;
+- calculate confidence;
+- generate decisions or alerts;
+- access Learning Memory;
+- access Research Plane;
+- access exchange, transport, bridge, validation, normalizer, or Live Data
+  layers.
+
+Advanced structural reasoning and market efficiency reasoning remain future
+milestones.
+
+Structure Engine has an implemented expansion skeleton that can validate
+Perception-produced `StructuralEvidence` without adding interpretation.
+
+Market Efficiency Engine has an implemented expansion skeleton that can validate
+Perception-produced `MarketEfficiencyEvidence` without adding interpretation.
+
+In that future expansion, they may deepen the evidence produced by Perception.
 
 Structure Engine studies how price behaves.
 
@@ -174,10 +193,10 @@ Their evidence is combined by the Hypothesis Engine.
 
 ## 1. Perception Engine
 
-Status: planned next Runtime alignment milestone.
+Status: implemented skeleton.
 
-The planned Perception Engine reads the Runtime `MarketSnapshot` and produces
-neutral observations.
+Perception Engine v0.1 reads the Runtime `MarketSnapshot` and produces objective
+`StructuralEvidence` and `MarketEfficiencyEvidence`.
 
 Examples:
 
@@ -191,15 +210,22 @@ Examples:
 
 No interpretation.
 
-Only observation.
+Only objective evidence.
 
 ---
 
 ## 2. Structure Engine
 
-Status: planned next Runtime alignment milestone.
+Status: implemented expansion skeleton.
 
-Reads chart structure.
+The current Structure Engine expansion validates Perception-produced
+`StructuralEvidence`.
+
+It is not part of the current Runtime Orchestrator flow.
+
+Advanced structural reasoning remains planned.
+
+Future examples:
 
 Examples:
 
@@ -221,9 +247,16 @@ It does not make trading decisions.
 
 ## 3. Market Efficiency Engine
 
-Status: planned next Runtime alignment milestone.
+Status: implemented expansion skeleton.
 
-Reads internal market mechanics.
+The current Market Efficiency Engine expansion validates Perception-produced
+`MarketEfficiencyEvidence`.
+
+It is not part of the current Runtime Orchestrator flow.
+
+Advanced market efficiency reasoning remains planned.
+
+Future examples:
 
 Examples:
 

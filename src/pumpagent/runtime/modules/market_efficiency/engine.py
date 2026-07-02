@@ -1,6 +1,6 @@
 """Market Efficiency Engine v0.2.
 
-Market Efficiency produces objective participation evidence from observations.
+Market Efficiency produces or refines objective participation evidence.
 It remains evidence-only and does not own downstream Runtime reasoning.
 """
 
@@ -101,8 +101,31 @@ def build_market_efficiency_evidence(
     )
 
 
+def refine_market_efficiency_evidence(
+    evidence: MarketEfficiencyEvidence,
+    *,
+    runtime_event_id: str | None = None,
+) -> MarketEfficiencyEvidence:
+    """Validate Perception-produced MarketEfficiencyEvidence without interpretation."""
+
+    event_id = runtime_event_id or evidence.event_id
+    if evidence.event_id != event_id:
+        raise MarketEfficiencyError(
+            "MarketEfficiencyEvidence.event_id must match the RuntimeEvent.event_id."
+        )
+
+    return evidence
+
+
 def add_market_efficiency_evidence(event: RuntimeEvent) -> RuntimeEvent:
     """Return a new event with only market_efficiency_evidence added."""
+
+    if event.market_efficiency_evidence is not None:
+        evidence = refine_market_efficiency_evidence(
+            event.market_efficiency_evidence,
+            runtime_event_id=event.event_id,
+        )
+        return event.with_sections(market_efficiency_evidence=evidence)
 
     if event.observation_package is None:
         raise MarketEfficiencyError("RuntimeEvent.observation_package is required.")
