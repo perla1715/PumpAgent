@@ -47,6 +47,9 @@ Examples of extracted facts include:
 - Volume
 - OHLCV availability
 - Candle count
+- Required OHLCV field presence
+- Latest candle timestamp
+- Malformed candle indicators
 - Latest close
 - Observed high
 - Observed low
@@ -61,6 +64,14 @@ Examples of extracted facts include:
 No conclusions are made here.
 
 Everything remains evidence.
+
+Advanced Perception v1 step 1 adds OHLCV integrity facts to structural evidence
+context.
+
+These facts describe candle data shape only.
+
+They do not classify market state, create hypotheses, calculate probability,
+calculate confidence, generate alerts, or imply trading action.
 
 ---
 

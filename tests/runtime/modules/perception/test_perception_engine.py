@@ -77,6 +77,26 @@ class PerceptionEngineTests(unittest.TestCase):
             "not_assessed",
         )
 
+    def test_perception_evidence_includes_ohlcv_integrity_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        integrity = result.structural_evidence.technical_context["ohlcv_integrity"]
+
+        self.assertTrue(integrity["ohlcv_present"])
+        self.assertEqual(integrity["candle_count"], len(event.market_snapshot.ohlcv))
+        self.assertEqual(
+            integrity["required_candle_fields"],
+            ("timestamp", "open", "high", "low", "close", "volume"),
+        )
+        self.assertTrue(integrity["all_required_candle_fields_present"])
+        self.assertEqual(
+            integrity["latest_candle_timestamp"],
+            event.market_snapshot.ohlcv[-1]["timestamp"],
+        )
+        self.assertEqual(integrity["malformed_candle_indexes"], ())
+        self.assertEqual(integrity["missing_fields_by_candle_index"], {})
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 

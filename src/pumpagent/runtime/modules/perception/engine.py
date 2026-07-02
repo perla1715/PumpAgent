@@ -124,6 +124,7 @@ def _build_structural_evidence(
     event_id: str,
 ) -> StructuralEvidence:
     candles = snapshot.ohlcv
+    ohlcv_integrity = _ohlcv_integrity_context(snapshot)
     high_values = tuple(_as_float(candle["high"], "high", index) for index, candle in enumerate(candles))
     low_values = tuple(_as_float(candle["low"], "low", index) for index, candle in enumerate(candles))
     latest_close = _as_float(candles[-1]["close"], "close", len(candles) - 1)
@@ -136,6 +137,7 @@ def _build_structural_evidence(
         "observed_low": min(low_values),
         "high_low_range": max(high_values) - min(low_values),
         "data_quality_status": snapshot.data_quality_status.value,
+        "ohlcv_integrity": ohlcv_integrity,
     }
 
     return StructuralEvidence(
@@ -229,6 +231,41 @@ def _validate_market_snapshot(snapshot: MarketSnapshot) -> None:
 
     if snapshot.volume is None:
         raise PerceptionError("MarketSnapshot.volume is required.")
+
+
+def _ohlcv_integrity_context(snapshot: MarketSnapshot) -> dict[str, Any]:
+    malformed_candle_indexes: list[int] = []
+    missing_fields_by_index: dict[int, tuple[str, ...]] = {}
+
+    for index, candle in enumerate(snapshot.ohlcv):
+        if not isinstance(candle, Mapping):
+            malformed_candle_indexes.append(index)
+            missing_fields_by_index[index] = REQUIRED_OHLCV_FIELDS
+            continue
+
+        missing_fields = tuple(
+            field for field in REQUIRED_OHLCV_FIELDS if field not in candle
+        )
+        if missing_fields:
+            malformed_candle_indexes.append(index)
+            missing_fields_by_index[index] = missing_fields
+
+    latest_candle = snapshot.ohlcv[-1] if snapshot.ohlcv else None
+    latest_timestamp = (
+        latest_candle.get("timestamp")
+        if isinstance(latest_candle, Mapping)
+        else None
+    )
+
+    return {
+        "ohlcv_present": len(snapshot.ohlcv) > 0,
+        "candle_count": len(snapshot.ohlcv),
+        "required_candle_fields": REQUIRED_OHLCV_FIELDS,
+        "all_required_candle_fields_present": not malformed_candle_indexes,
+        "latest_candle_timestamp": latest_timestamp,
+        "malformed_candle_indexes": tuple(malformed_candle_indexes),
+        "missing_fields_by_candle_index": missing_fields_by_index,
+    }
 
 
 def _available_participation_metrics(snapshot: MarketSnapshot) -> tuple[str, ...]:
