@@ -70,6 +70,7 @@ Examples of extracted facts include:
 - Funding availability
 - CVD
 - Liquidations
+- Participation availability facts
 - Missing participation metrics
 - Data quality context
 
@@ -113,6 +114,17 @@ timestamp, and last candle timestamp.
 
 They do not infer support, resistance, trend, breakout, volatility regime,
 market structure, probability, confidence, alerts, or trading action.
+
+Advanced Perception v1 step 5 adds participation availability facts to market
+efficiency evidence context.
+
+These facts report whether volume, open interest, funding, CVD, and
+liquidations are available, and which optional participation metrics are
+missing.
+
+They do not evaluate metric quality, infer participation strength, create
+hypotheses, calculate probability, calculate confidence, generate alerts, or
+imply trading action.
 
 ---
 

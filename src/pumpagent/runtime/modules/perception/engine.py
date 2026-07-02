@@ -190,6 +190,7 @@ def _build_market_efficiency_evidence(
 ) -> MarketEfficiencyEvidence:
     available_metrics = _available_participation_metrics(snapshot)
     data_quality_context = _data_quality_context(snapshot)
+    participation_availability_facts = _participation_availability_facts(snapshot)
     missing_metrics = tuple(
         metric
         for metric in ("open_interest", "funding_rate", "cvd", "liquidations")
@@ -207,6 +208,7 @@ def _build_market_efficiency_evidence(
         "liquidations_available": "liquidations" in available_metrics,
         "data_quality_status": snapshot.data_quality_status.value,
         "data_quality_context": data_quality_context,
+        "participation_availability_facts": participation_availability_facts,
     }
 
     return MarketEfficiencyEvidence(
@@ -343,6 +345,24 @@ def _observed_range_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
         "candle_count_used": len(snapshot.ohlcv),
         "first_candle_timestamp": snapshot.ohlcv[0]["timestamp"],
         "last_candle_timestamp": snapshot.ohlcv[-1]["timestamp"],
+    }
+
+
+def _participation_availability_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
+    available_metrics = _available_participation_metrics(snapshot)
+    missing_metrics = tuple(
+        metric
+        for metric in ("open_interest", "funding_rate", "cvd", "liquidations")
+        if metric not in available_metrics
+    )
+
+    return {
+        "volume_available": snapshot.volume is not None,
+        "open_interest_available": "open_interest" in available_metrics,
+        "funding_available": "funding_rate" in available_metrics,
+        "cvd_available": "cvd" in available_metrics,
+        "liquidations_available": "liquidations" in available_metrics,
+        "missing_participation_metrics": missing_metrics,
     }
 
 

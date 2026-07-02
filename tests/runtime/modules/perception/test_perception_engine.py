@@ -322,6 +322,112 @@ class PerceptionEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(PerceptionError, "missing required fields: high"):
             build_perception_evidence(snapshot)
 
+    def test_market_efficiency_includes_participation_availability_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        context = result.market_efficiency_evidence.market_mechanics_context
+        facts = context["participation_availability_facts"]
+
+        self.assertTrue(facts["volume_available"])
+        self.assertTrue(facts["open_interest_available"])
+        self.assertTrue(facts["funding_available"])
+        self.assertTrue(facts["cvd_available"])
+        self.assertTrue(facts["liquidations_available"])
+        self.assertEqual(facts["missing_participation_metrics"], ())
+
+    def test_participation_availability_reports_missing_optional_metrics(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-participation-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "high": 101.0,
+                    "low": 98.0,
+                    "close": 100.0,
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        result = build_perception_evidence(snapshot)
+        facts = (
+            result.market_efficiency_evidence.market_mechanics_context[
+                "participation_availability_facts"
+            ]
+        )
+
+        self.assertTrue(facts["volume_available"])
+        self.assertFalse(facts["open_interest_available"])
+        self.assertFalse(facts["funding_available"])
+        self.assertFalse(facts["cvd_available"])
+        self.assertFalse(facts["liquidations_available"])
+        self.assertEqual(
+            facts["missing_participation_metrics"],
+            ("open_interest", "funding_rate", "cvd", "liquidations"),
+        )
+
+    def test_participation_availability_preserves_existing_context_fields(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        context = result.market_efficiency_evidence.market_mechanics_context
+        facts = context["participation_availability_facts"]
+
+        self.assertEqual(context["volume_available"], facts["volume_available"])
+        self.assertEqual(
+            context["open_interest_available"],
+            facts["open_interest_available"],
+        )
+        self.assertEqual(context["funding_rate_available"], facts["funding_available"])
+        self.assertEqual(context["cvd_available"], facts["cvd_available"])
+        self.assertEqual(
+            context["liquidations_available"],
+            facts["liquidations_available"],
+        )
+        self.assertEqual(
+            context["missing_participation_metrics"],
+            facts["missing_participation_metrics"],
+        )
+
+    def test_participation_availability_output_stays_neutral(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        facts = (
+            result.market_efficiency_evidence.market_mechanics_context[
+                "participation_availability_facts"
+            ]
+        )
+        output_text = " ".join(_flatten_text(facts)).lower()
+
+        forbidden_terms = (
+            "agent_state",
+            "hypothesis",
+            "confidence",
+            "decision",
+            "alert",
+            "trade",
+            "trading_signal",
+            "bullish",
+            "bearish",
+            "continuation",
+            "breakout",
+            "reversal",
+        )
+        for term in forbidden_terms:
+            with self.subTest(term=term):
+                self.assertNotIn(term, output_text)
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 
