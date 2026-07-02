@@ -1,8 +1,17 @@
 # Perception Engine
 
+## Status
+
+Planned next Runtime alignment milestone.
+
+This document describes the intended Perception layer. It should not be read as
+part of the currently implemented Runtime Core milestone.
+
+---
+
 ## Purpose
 
-The Perception Engine is the sensory system of PumpAgent.
+The planned Perception Engine is the sensory system of PumpAgent.
 
 It does not predict.
 
@@ -16,7 +25,7 @@ The quality of every future decision depends on the quality of perception.
 
 ## Responsibilities
 
-The engine continuously collects:
+The planned engine collects and normalizes observations such as:
 
 - Price
 - Volume
@@ -61,7 +70,8 @@ Only facts.
 
 ## Continuous Observation
 
-The engine never sleeps.
+In the future live Runtime, the engine must continuously process new market
+updates.
 
 Every new candle updates the current observations.
 
@@ -73,10 +83,9 @@ Everything becomes evidence for future reasoning.
 
 ## Output
 
-The output of Perception Engine is a clean observation package.
+The planned output of Perception Engine is a clean observation package.
 
-This package is sent to:
+This package will be sent to:
 
 - Structure Engine
 - Market Efficiency Engine
-- Memory

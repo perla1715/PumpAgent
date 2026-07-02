@@ -1,0 +1,54 @@
+{
+  "source_event_id": "live-source-evt-1",
+  "symbol": "BTCUSDT",
+  "exchange": "binance",
+  "timeframe": "1m",
+  "source_timestamp": "2026-07-01T12:00:00+00:00",
+  "receive_timestamp": "2026-07-01T12:00:01+00:00",
+  "price": 100.0,
+  "ohlcv": [
+    {
+      "timestamp": "2026-07-01T12:00:00+00:00",
+      "open": 99.0,
+      "high": 101.0,
+      "low": 98.0,
+      "close": 100.0,
+      "volume": 10.0
+    }
+  ],
+  "volume": 10.0,
+  "data_source": "fixture",
+  "quality_status": "good",
+  "schema_version": "1.0",
+  "optional_market_metrics": {
+    "open_interest": 1000.0,
+    "normalizer_version": "0.1",
+    "validator_version": "0.1"
+  },
+  "quality_reasons": [
+    "fixture_quality_declared_good"
+  ],
+  "missing_fields": [
+    "funding_rate"
+  ],
+  "validation_warnings": [
+    "optional_metric_missing"
+  ],
+  "source_metadata": {
+    "exchange": "binance",
+    "adapter_name": "fixture_source",
+    "adapter_version": "0.1",
+    "source_timestamp": "2026-07-01T12:00:00+00:00",
+    "receive_timestamp": "2026-07-01T12:00:01+00:00",
+    "transport": "fixture",
+    "source_symbol": "BTCUSDT",
+    "normalized_symbol": "BTCUSDT",
+    "source_timeframe": "1m",
+    "normalized_timeframe": "1m",
+    "schema_version": "1.0",
+    "latency_ms": 1000.0,
+    "correlation_id": "fixture-corr-1",
+    "request_id": "fixture-request-1",
+    "sequence_id": "fixture-seq-1"
+  }
+}

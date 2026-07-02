@@ -1,0 +1,32 @@
+{
+  "event_id": "evt-fixture-1",
+  "timestamp": "2026-07-01T12:00:00+00:00",
+  "symbol": "BTCUSDT",
+  "exchange": "binance",
+  "timeframe": "1m",
+  "price": 100.0,
+  "ohlcv": [
+    {
+      "timestamp": "2026-07-01T11:59:00+00:00",
+      "open": 99.0,
+      "high": 101.0,
+      "low": 98.5,
+      "close": 100.0,
+      "volume": 42.0
+    }
+  ],
+  "volume": 42.0,
+  "data_source": "fixture",
+  "data_quality_status": "valid",
+  "schema_version": "1.0",
+  "optional_market_metrics": {
+    "open_interest": 1200.5,
+    "funding_rate": 0.0001,
+    "cvd": 250.0,
+    "liquidations": {
+      "long": 10.0,
+      "short": 20.0
+    }
+  },
+  "missing_fields": []
+}

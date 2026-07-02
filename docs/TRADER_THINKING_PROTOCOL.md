@@ -39,11 +39,12 @@ Every market observation must follow this sequence:
 5. Compare structure with participation.
 6. Build a hypothesis.
 7. Look for evidence against the hypothesis.
-8. Estimate confidence.
-9. Decide what to do.
-10. Monitor what happens next.
-11. Review the result.
-12. Extract learning.
+8. Estimate possible next scenarios.
+9. Estimate confidence.
+10. Decide whether to observe, wait, warn, or alert.
+11. Monitor what happens next.
+12. Review the result.
+13. Extract learning.
 
 This sequence must not be skipped.
 

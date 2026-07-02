@@ -1,8 +1,17 @@
 # Structure Engine
 
+## Status
+
+Planned next Runtime alignment milestone.
+
+This document describes the intended Structure layer. It should not be read as
+part of the currently implemented Runtime Core milestone.
+
+---
+
 ## Purpose
 
-The Structure Engine interprets the visual structure of the market.
+The planned Structure Engine interprets the visual structure of the market.
 
 It does not study participation.
 
@@ -14,7 +23,7 @@ Its responsibility is to understand whether the current structure is becoming st
 
 ## Structural Elements
 
-The engine continuously evaluates:
+The planned engine evaluates:
 
 - EMA structure
 - Fibonacci levels
@@ -64,8 +73,8 @@ Examples include:
 
 ## Output
 
-The engine produces structural evidence.
+The planned engine produces structural evidence.
 
 It never makes trading decisions.
 
-Its conclusions are passed to the Hypothesis Engine.
+Its evidence will be passed to the Hypothesis Engine.
