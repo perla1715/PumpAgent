@@ -243,6 +243,85 @@ class PerceptionEngineTests(unittest.TestCase):
 
         self.assertEqual(efficiency_context, structural_context)
 
+    def test_perception_evidence_includes_observed_range_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+        candles = event.market_snapshot.ohlcv
+        expected_high = max(float(candle["high"]) for candle in candles)
+        expected_low = min(float(candle["low"]) for candle in candles)
+
+        result = build_perception_evidence(event.market_snapshot)
+        context = result.structural_evidence.technical_context
+        facts = context["observed_range_facts"]
+
+        self.assertEqual(facts["observed_high"], expected_high)
+        self.assertEqual(facts["observed_low"], expected_low)
+        self.assertEqual(facts["observed_range_size"], expected_high - expected_low)
+        self.assertEqual(facts["candle_count_used"], len(candles))
+        self.assertEqual(facts["first_candle_timestamp"], candles[0]["timestamp"])
+        self.assertEqual(facts["last_candle_timestamp"], candles[-1]["timestamp"])
+
+    def test_observed_range_facts_preserve_existing_range_context_fields(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        context = result.structural_evidence.technical_context
+        facts = context["observed_range_facts"]
+
+        self.assertEqual(context["observed_high"], facts["observed_high"])
+        self.assertEqual(context["observed_low"], facts["observed_low"])
+        self.assertEqual(context["high_low_range"], facts["observed_range_size"])
+
+    def test_observed_range_facts_reject_invalid_numeric_field_clearly(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "high": "bad-high",
+                    "low": 98.0,
+                    "close": 100.0,
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        with self.assertRaisesRegex(PerceptionError, "field high must be numeric"):
+            build_perception_evidence(snapshot)
+
+    def test_observed_range_facts_reject_missing_range_field_clearly(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "low": 98.0,
+                    "close": 100.0,
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        with self.assertRaisesRegex(PerceptionError, "missing required fields: high"):
+            build_perception_evidence(snapshot)
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 

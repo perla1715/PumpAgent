@@ -141,21 +141,21 @@ def _build_structural_evidence(
     ohlcv_integrity = _ohlcv_integrity_context(snapshot)
     latest_candle_facts = _latest_candle_facts(snapshot)
     data_quality_context = _data_quality_context(snapshot)
-    high_values = tuple(_as_float(candle["high"], "high", index) for index, candle in enumerate(candles))
-    low_values = tuple(_as_float(candle["low"], "low", index) for index, candle in enumerate(candles))
+    observed_range_facts = _observed_range_facts(snapshot)
     latest_close = _as_float(candles[-1]["close"], "close", len(candles) - 1)
 
     technical_context = {
         "source_snapshot_event_id": snapshot.event_id,
         "candle_count": len(candles),
         "latest_close": latest_close,
-        "observed_high": max(high_values),
-        "observed_low": min(low_values),
-        "high_low_range": max(high_values) - min(low_values),
+        "observed_high": observed_range_facts["observed_high"],
+        "observed_low": observed_range_facts["observed_low"],
+        "high_low_range": observed_range_facts["observed_range_size"],
         "data_quality_status": snapshot.data_quality_status.value,
         "ohlcv_integrity": ohlcv_integrity,
         "latest_candle_facts": latest_candle_facts,
         "data_quality_context": data_quality_context,
+        "observed_range_facts": observed_range_facts,
     }
 
     return StructuralEvidence(
@@ -320,6 +320,29 @@ def _data_quality_context(snapshot: MarketSnapshot) -> dict[str, Any]:
         "schema_version": snapshot.schema_version,
         "required_snapshot_fields_present": not snapshot.missing_fields,
         "existing_quality_metadata": existing_quality_metadata,
+    }
+
+
+def _observed_range_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
+    high_values = tuple(
+        _as_float(candle["high"], "high", index)
+        for index, candle in enumerate(snapshot.ohlcv)
+    )
+    low_values = tuple(
+        _as_float(candle["low"], "low", index)
+        for index, candle in enumerate(snapshot.ohlcv)
+    )
+
+    observed_high = max(high_values)
+    observed_low = min(low_values)
+
+    return {
+        "observed_high": observed_high,
+        "observed_low": observed_low,
+        "observed_range_size": observed_high - observed_low,
+        "candle_count_used": len(snapshot.ohlcv),
+        "first_candle_timestamp": snapshot.ohlcv[0]["timestamp"],
+        "last_candle_timestamp": snapshot.ohlcv[-1]["timestamp"],
     }
 
 

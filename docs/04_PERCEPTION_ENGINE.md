@@ -62,6 +62,9 @@ Examples of extracted facts include:
 - Latest close
 - Observed high
 - Observed low
+- Observed range size
+- First candle timestamp
+- Last candle timestamp
 - High / low range
 - Open Interest availability
 - Funding availability
@@ -100,6 +103,16 @@ schema version, and source metadata references when available.
 They do not create synthetic quality scores and do not classify market state,
 create hypotheses, calculate probability, calculate confidence, generate
 alerts, or imply trading action.
+
+Advanced Perception v1 step 4 adds observed range facts to structural evidence
+context.
+
+These facts are derived only from available OHLCV candles and include observed
+high, observed low, observed range size, candle count used, first candle
+timestamp, and last candle timestamp.
+
+They do not infer support, resistance, trend, breakout, volatility regime,
+market structure, probability, confidence, alerts, or trading action.
 
 ---
 
