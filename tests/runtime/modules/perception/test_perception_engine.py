@@ -156,6 +156,93 @@ class PerceptionEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(PerceptionError, "field open must be numeric"):
             build_perception_evidence(snapshot)
 
+    def test_perception_evidence_includes_data_quality_context(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-quality-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "high": 101.0,
+                    "low": 98.0,
+                    "close": 100.0,
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.MISSING,
+            optional_market_metrics={
+                "quality_reasons": ("optional_metric_missing",),
+                "validation_warnings": ("source_delay_observed",),
+                "source_timestamp": "2026-07-01T12:00:00Z",
+                "receive_timestamp": "2026-07-01T12:00:01Z",
+                "adapter_name": "fixture_adapter",
+                "adapter_version": "0.1",
+                "normalizer_version": "0.1",
+                "validator_version": "0.1",
+                "transport": "fixture",
+                "correlation_id": "corr-1",
+                "source_metadata": {
+                    "exchange": "binance",
+                    "source_symbol": "BTCUSDT",
+                    "source_timeframe": "1m",
+                },
+                "open_interest": 1200.5,
+            },
+            raw_payload_reference="fixture://quality-case",
+            latency_ms=15,
+            missing_fields=("funding_rate",),
+        )
+
+        result = build_perception_evidence(snapshot)
+        context = result.structural_evidence.technical_context["data_quality_context"]
+
+        self.assertEqual(context["data_quality_status"], "missing")
+        self.assertEqual(context["missing_fields"], ("funding_rate",))
+        self.assertEqual(context["missing_field_count"], 1)
+        self.assertTrue(context["has_missing_fields"])
+        self.assertEqual(context["latency_ms"], 15)
+        self.assertEqual(context["raw_payload_reference"], "fixture://quality-case")
+        self.assertEqual(context["data_source"], "fixture")
+        self.assertEqual(context["schema_version"], snapshot.schema_version)
+        self.assertFalse(context["required_snapshot_fields_present"])
+        self.assertEqual(
+            context["existing_quality_metadata"]["quality_reasons"],
+            ("optional_metric_missing",),
+        )
+        self.assertEqual(
+            context["existing_quality_metadata"]["validation_warnings"],
+            ("source_delay_observed",),
+        )
+        self.assertEqual(
+            context["existing_quality_metadata"]["source_metadata"]["source_symbol"],
+            "BTCUSDT",
+        )
+        self.assertNotIn("open_interest", context["existing_quality_metadata"])
+
+    def test_data_quality_context_is_shared_by_perception_evidence_outputs(
+        self,
+    ) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        structural_context = result.structural_evidence.technical_context[
+            "data_quality_context"
+        ]
+        efficiency_context = (
+            result.market_efficiency_evidence.market_mechanics_context[
+                "data_quality_context"
+            ]
+        )
+
+        self.assertEqual(efficiency_context, structural_context)
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 

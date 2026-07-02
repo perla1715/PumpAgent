@@ -21,6 +21,20 @@ from pumpagent.runtime.domain.enums import EvidenceStrength, UncertaintyLevel
 
 
 REQUIRED_OHLCV_FIELDS = ("timestamp", "open", "high", "low", "close", "volume")
+QUALITY_METADATA_KEYS = (
+    "quality_reasons",
+    "validation_warnings",
+    "source_timestamp",
+    "receive_timestamp",
+    "latency_ms",
+    "adapter_name",
+    "adapter_version",
+    "normalizer_version",
+    "validator_version",
+    "transport",
+    "correlation_id",
+    "source_metadata",
+)
 
 
 class PerceptionError(ValueError):
@@ -126,6 +140,7 @@ def _build_structural_evidence(
     candles = snapshot.ohlcv
     ohlcv_integrity = _ohlcv_integrity_context(snapshot)
     latest_candle_facts = _latest_candle_facts(snapshot)
+    data_quality_context = _data_quality_context(snapshot)
     high_values = tuple(_as_float(candle["high"], "high", index) for index, candle in enumerate(candles))
     low_values = tuple(_as_float(candle["low"], "low", index) for index, candle in enumerate(candles))
     latest_close = _as_float(candles[-1]["close"], "close", len(candles) - 1)
@@ -140,6 +155,7 @@ def _build_structural_evidence(
         "data_quality_status": snapshot.data_quality_status.value,
         "ohlcv_integrity": ohlcv_integrity,
         "latest_candle_facts": latest_candle_facts,
+        "data_quality_context": data_quality_context,
     }
 
     return StructuralEvidence(
@@ -173,6 +189,7 @@ def _build_market_efficiency_evidence(
     event_id: str,
 ) -> MarketEfficiencyEvidence:
     available_metrics = _available_participation_metrics(snapshot)
+    data_quality_context = _data_quality_context(snapshot)
     missing_metrics = tuple(
         metric
         for metric in ("open_interest", "funding_rate", "cvd", "liquidations")
@@ -189,6 +206,7 @@ def _build_market_efficiency_evidence(
         "cvd_available": "cvd" in available_metrics,
         "liquidations_available": "liquidations" in available_metrics,
         "data_quality_status": snapshot.data_quality_status.value,
+        "data_quality_context": data_quality_context,
     }
 
     return MarketEfficiencyEvidence(
@@ -281,6 +299,27 @@ def _latest_candle_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
         "low": _as_float(latest_candle["low"], "low", latest_index),
         "close": _as_float(latest_candle["close"], "close", latest_index),
         "volume": _as_float(latest_candle["volume"], "volume", latest_index),
+    }
+
+
+def _data_quality_context(snapshot: MarketSnapshot) -> dict[str, Any]:
+    existing_quality_metadata = {
+        key: snapshot.optional_market_metrics[key]
+        for key in QUALITY_METADATA_KEYS
+        if key in snapshot.optional_market_metrics
+    }
+
+    return {
+        "data_quality_status": snapshot.data_quality_status.value,
+        "missing_fields": snapshot.missing_fields,
+        "missing_field_count": len(snapshot.missing_fields),
+        "has_missing_fields": bool(snapshot.missing_fields),
+        "latency_ms": snapshot.latency_ms,
+        "raw_payload_reference": snapshot.raw_payload_reference,
+        "data_source": snapshot.data_source,
+        "schema_version": snapshot.schema_version,
+        "required_snapshot_fields_present": not snapshot.missing_fields,
+        "existing_quality_metadata": existing_quality_metadata,
     }
 
 

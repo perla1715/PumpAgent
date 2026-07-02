@@ -55,6 +55,10 @@ Examples of extracted facts include:
 - Latest candle close
 - Latest candle volume
 - Malformed candle indicators
+- Data quality status
+- Missing fields
+- Latency when available
+- Source metadata references when available
 - Latest close
 - Observed high
 - Observed low
@@ -86,6 +90,16 @@ volume as objective values only.
 
 They do not classify market state, create hypotheses, calculate probability,
 calculate confidence, generate alerts, or imply trading action.
+
+Advanced Perception v1 step 3 adds data quality context to evidence context.
+
+These facts carry existing `MarketSnapshot` quality metadata, including data
+quality status, missing fields, latency, raw payload reference, data source,
+schema version, and source metadata references when available.
+
+They do not create synthetic quality scores and do not classify market state,
+create hypotheses, calculate probability, calculate confidence, generate
+alerts, or imply trading action.
 
 ---
 
