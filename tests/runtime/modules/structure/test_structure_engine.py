@@ -82,9 +82,14 @@ class StructureEngineTests(unittest.TestCase):
 
         evidence = refine_structural_evidence(event.structural_evidence)
 
+        self.assertIsInstance(evidence, StructuralEvidence)
         self.assertIs(evidence, event.structural_evidence)
         self.assertEqual(evidence.event_id, event.event_id)
         self.assertEqual(evidence.structural_bias, "not_assessed")
+        self.assertEqual(
+            evidence.technical_context["source_snapshot_event_id"],
+            event.market_snapshot.event_id,
+        )
 
     def test_structure_can_run_after_perception_without_touching_other_sections(
         self,

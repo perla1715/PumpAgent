@@ -106,9 +106,14 @@ class MarketEfficiencyEngineTests(unittest.TestCase):
             event.market_efficiency_evidence
         )
 
+        self.assertIsInstance(evidence, MarketEfficiencyEvidence)
         self.assertIs(evidence, event.market_efficiency_evidence)
         self.assertEqual(evidence.event_id, event.event_id)
         self.assertEqual(evidence.efficiency_status, "not_assessed")
+        self.assertEqual(
+            evidence.market_mechanics_context["source_snapshot_event_id"],
+            event.market_snapshot.event_id,
+        )
 
     def test_market_efficiency_can_run_after_perception_without_touching_other_sections(
         self,

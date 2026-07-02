@@ -179,13 +179,41 @@ Perception-produced `StructuralEvidence` without adding interpretation.
 Market Efficiency Engine has an implemented expansion skeleton that can validate
 Perception-produced `MarketEfficiencyEvidence` without adding interpretation.
 
-In that future expansion, they may deepen the evidence produced by Perception.
+## MVP Refinement Contract
 
-Structure Engine studies how price behaves.
+Perception owns initial evidence creation.
 
-Market Efficiency Engine studies participation and internal market mechanics.
+Structure Engine and Market Efficiency Engine do not replace evidence ownership.
 
-Their evidence is combined by the Hypothesis Engine.
+They may refine evidence by returning an updated evidence object of the same
+domain type:
+
+- `StructuralEvidence` -> `StructuralEvidence`
+- `MarketEfficiencyEvidence` -> `MarketEfficiencyEvidence`
+
+MVP refinement may enrich evidence context with objective facts only.
+
+Refinement must preserve:
+
+- Runtime `event_id`;
+- source snapshot identity stored in evidence context;
+- evidence domain type;
+- downstream Runtime boundaries.
+
+Refinement must not:
+
+- classify market state;
+- create hypotheses;
+- calculate scenario probabilities;
+- calculate confidence;
+- generate decisions or alerts;
+- use trading language;
+- access Learning Memory, Research Plane, Live Data, exchange adapters, bridge,
+  validation, normalizers, or transport layers.
+
+In future expansion, Structure Engine and Market Efficiency Engine may deepen
+the evidence produced by Perception before that evidence is consumed by the
+Hypothesis Engine.
 
 ---
 
@@ -227,8 +255,6 @@ Advanced structural reasoning remains planned.
 
 Future examples:
 
-Examples:
-
 - EMA
 - Bollinger
 - Fib
@@ -257,8 +283,6 @@ It is not part of the current Runtime Orchestrator flow.
 Advanced market efficiency reasoning remains planned.
 
 Future examples:
-
-Examples:
 
 - Participation
 - OI Growth

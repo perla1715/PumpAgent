@@ -25,9 +25,8 @@ Future versions may study how price behaves.
 
 It does not study participation.
 
-It studies how price behaves.
-
-Its responsibility is to understand whether the current structure is becoming stronger or weaker.
+Future versions may evaluate whether the current structure is becoming stronger
+or weaker.
 
 ---
 
@@ -37,13 +36,21 @@ The current skeleton:
 
 - reads `StructuralEvidence`;
 - verifies Runtime event identity;
-- returns evidence unchanged;
+- returns `StructuralEvidence`;
+- may later return an updated `StructuralEvidence` with objective context
+  enrichment only;
+- preserves source snapshot identity stored in `technical_context`;
 - remains deterministic;
 - remains side-effect free;
 - does not modify MarketSnapshot;
 - does not modify MarketEfficiencyEvidence;
 - does not create hypotheses, states, probabilities, confidence, decisions, or
   alerts.
+
+Refinement must not change ownership of the evidence.
+
+Perception owns initial `StructuralEvidence` creation in the current Runtime
+flow.
 
 ---
 

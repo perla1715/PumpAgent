@@ -35,13 +35,21 @@ The current skeleton:
 
 - reads `MarketEfficiencyEvidence`;
 - verifies Runtime event identity;
-- returns evidence unchanged;
+- returns `MarketEfficiencyEvidence`;
+- may later return an updated `MarketEfficiencyEvidence` with objective context
+  enrichment only;
+- preserves source snapshot identity stored in `market_mechanics_context`;
 - remains deterministic;
 - remains side-effect free;
 - does not modify MarketSnapshot;
 - does not modify StructuralEvidence;
 - does not create hypotheses, states, probabilities, confidence, decisions, or
   alerts.
+
+Refinement must not change ownership of the evidence.
+
+Perception owns initial `MarketEfficiencyEvidence` creation in the current
+Runtime flow.
 
 ---
 
