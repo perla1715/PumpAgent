@@ -428,6 +428,120 @@ class PerceptionEngineTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertNotIn(term, output_text)
 
+    def test_perception_evidence_includes_close_sequence_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+        candles = event.market_snapshot.ohlcv
+        first_close = float(candles[0]["close"])
+        latest_close = float(candles[-1]["close"])
+        close_delta = latest_close - first_close
+
+        result = build_perception_evidence(event.market_snapshot)
+        facts = result.structural_evidence.technical_context["close_sequence_facts"]
+
+        self.assertEqual(facts["first_close"], first_close)
+        self.assertEqual(facts["latest_close"], latest_close)
+        self.assertEqual(facts["close_delta"], close_delta)
+        self.assertEqual(
+            facts["close_delta_percent"],
+            (close_delta / first_close) * 100.0,
+        )
+        self.assertEqual(facts["candle_count_used"], len(candles))
+
+    def test_close_sequence_percent_is_none_when_first_close_is_zero(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-close-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "high": 101.0,
+                    "low": 98.0,
+                    "close": 0.0,
+                    "volume": 42.0,
+                },
+                {
+                    "timestamp": "2026-07-01T12:01:00Z",
+                    "open": 100.0,
+                    "high": 102.0,
+                    "low": 99.0,
+                    "close": 100.0,
+                    "volume": 43.0,
+                },
+            ),
+            volume=43.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        result = build_perception_evidence(snapshot)
+        facts = result.structural_evidence.technical_context["close_sequence_facts"]
+
+        self.assertEqual(facts["first_close"], 0.0)
+        self.assertEqual(facts["latest_close"], 100.0)
+        self.assertEqual(facts["close_delta"], 100.0)
+        self.assertIsNone(facts["close_delta_percent"])
+        self.assertEqual(facts["candle_count_used"], 2)
+
+    def test_close_sequence_facts_reject_invalid_close_field_clearly(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-close-2",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": 99.0,
+                    "high": 101.0,
+                    "low": 98.0,
+                    "close": "bad-close",
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        with self.assertRaisesRegex(PerceptionError, "field close must be numeric"):
+            build_perception_evidence(snapshot)
+
+    def test_close_sequence_facts_output_stays_neutral(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        facts = result.structural_evidence.technical_context["close_sequence_facts"]
+        output_text = " ".join(_flatten_text(facts)).lower()
+
+        forbidden_terms = (
+            "bullish",
+            "bearish",
+            "trend",
+            "strength",
+            "weakness",
+            "continuation",
+            "failure",
+            "pump",
+            "dump",
+            "long",
+            "short",
+            "hypothesis",
+            "confidence",
+            "decision",
+            "alert",
+            "trade",
+        )
+        for term in forbidden_terms:
+            with self.subTest(term=term):
+                self.assertNotIn(term, output_text)
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 

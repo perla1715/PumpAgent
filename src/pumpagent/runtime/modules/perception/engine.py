@@ -142,6 +142,7 @@ def _build_structural_evidence(
     latest_candle_facts = _latest_candle_facts(snapshot)
     data_quality_context = _data_quality_context(snapshot)
     observed_range_facts = _observed_range_facts(snapshot)
+    close_sequence_facts = _close_sequence_facts(snapshot)
     latest_close = _as_float(candles[-1]["close"], "close", len(candles) - 1)
 
     technical_context = {
@@ -156,6 +157,7 @@ def _build_structural_evidence(
         "latest_candle_facts": latest_candle_facts,
         "data_quality_context": data_quality_context,
         "observed_range_facts": observed_range_facts,
+        "close_sequence_facts": close_sequence_facts,
     }
 
     return StructuralEvidence(
@@ -363,6 +365,25 @@ def _participation_availability_facts(snapshot: MarketSnapshot) -> dict[str, Any
         "cvd_available": "cvd" in available_metrics,
         "liquidations_available": "liquidations" in available_metrics,
         "missing_participation_metrics": missing_metrics,
+    }
+
+
+def _close_sequence_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
+    first_close = _as_float(snapshot.ohlcv[0]["close"], "close", 0)
+    latest_index = len(snapshot.ohlcv) - 1
+    latest_close = _as_float(snapshot.ohlcv[latest_index]["close"], "close", latest_index)
+    close_delta = latest_close - first_close
+    close_delta_percent = None
+
+    if first_close != 0:
+        close_delta_percent = (close_delta / first_close) * 100.0
+
+    return {
+        "first_close": first_close,
+        "latest_close": latest_close,
+        "close_delta": close_delta,
+        "close_delta_percent": close_delta_percent,
+        "candle_count_used": len(snapshot.ohlcv),
     }
 
 

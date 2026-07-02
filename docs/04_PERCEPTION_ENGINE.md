@@ -60,6 +60,9 @@ Examples of extracted facts include:
 - Latency when available
 - Source metadata references when available
 - Latest close
+- First close
+- Close delta
+- Close delta percent when safe
 - Observed high
 - Observed low
 - Observed range size
@@ -125,6 +128,16 @@ missing.
 They do not evaluate metric quality, infer participation strength, create
 hypotheses, calculate probability, calculate confidence, generate alerts, or
 imply trading action.
+
+Advanced Perception v1 step 6 adds close sequence facts to structural evidence
+context.
+
+These facts use only observed OHLCV close values and include first close,
+latest close, close delta, close delta percent when safe, and candle count
+used.
+
+They do not classify direction, state, strength, weakness, continuation,
+failure, pump, dump, probability, confidence, alerts, or trading action.
 
 ---
 
