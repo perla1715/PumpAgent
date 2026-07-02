@@ -49,6 +49,11 @@ Examples of extracted facts include:
 - Candle count
 - Required OHLCV field presence
 - Latest candle timestamp
+- Latest candle open
+- Latest candle high
+- Latest candle low
+- Latest candle close
+- Latest candle volume
 - Malformed candle indicators
 - Latest close
 - Observed high
@@ -69,6 +74,15 @@ Advanced Perception v1 step 1 adds OHLCV integrity facts to structural evidence
 context.
 
 These facts describe candle data shape only.
+
+They do not classify market state, create hypotheses, calculate probability,
+calculate confidence, generate alerts, or imply trading action.
+
+Advanced Perception v1 step 2 adds latest candle facts to structural evidence
+context.
+
+These facts expose the latest candle timestamp, open, high, low, close, and
+volume as objective values only.
 
 They do not classify market state, create hypotheses, calculate probability,
 calculate confidence, generate alerts, or imply trading action.

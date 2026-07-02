@@ -97,6 +97,65 @@ class PerceptionEngineTests(unittest.TestCase):
         self.assertEqual(integrity["malformed_candle_indexes"], ())
         self.assertEqual(integrity["missing_fields_by_candle_index"], {})
 
+    def test_perception_evidence_includes_latest_candle_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+        latest_candle = event.market_snapshot.ohlcv[-1]
+
+        result = build_perception_evidence(event.market_snapshot)
+        facts = result.structural_evidence.technical_context["latest_candle_facts"]
+
+        self.assertEqual(facts["timestamp"], latest_candle["timestamp"])
+        self.assertEqual(facts["open"], float(latest_candle["open"]))
+        self.assertEqual(facts["high"], float(latest_candle["high"]))
+        self.assertEqual(facts["low"], float(latest_candle["low"]))
+        self.assertEqual(facts["close"], float(latest_candle["close"]))
+        self.assertEqual(facts["volume"], float(latest_candle["volume"]))
+
+    def test_latest_candle_facts_do_not_change_ohlcv_integrity_facts(self) -> None:
+        event = make_event_with_market_snapshot()
+
+        result = build_perception_evidence(event.market_snapshot)
+        integrity = result.structural_evidence.technical_context["ohlcv_integrity"]
+
+        self.assertEqual(
+            set(integrity),
+            {
+                "ohlcv_present",
+                "candle_count",
+                "required_candle_fields",
+                "all_required_candle_fields_present",
+                "latest_candle_timestamp",
+                "malformed_candle_indexes",
+                "missing_fields_by_candle_index",
+            },
+        )
+
+    def test_latest_candle_facts_reject_invalid_numeric_field_clearly(self) -> None:
+        snapshot = MarketSnapshot(
+            event_id="snapshot-1",
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            price=100.0,
+            ohlcv=(
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": "bad-open",
+                    "high": 101.0,
+                    "low": 98.0,
+                    "close": 100.0,
+                    "volume": 42.0,
+                },
+            ),
+            volume=42.0,
+            data_source="fixture",
+            data_quality_status=DataQualityStatus.VALID,
+        )
+
+        with self.assertRaisesRegex(PerceptionError, "field open must be numeric"):
+            build_perception_evidence(snapshot)
+
     def test_perception_evidence_writes_only_owned_evidence_sections(self) -> None:
         event = make_event_with_market_snapshot()
 

@@ -125,6 +125,7 @@ def _build_structural_evidence(
 ) -> StructuralEvidence:
     candles = snapshot.ohlcv
     ohlcv_integrity = _ohlcv_integrity_context(snapshot)
+    latest_candle_facts = _latest_candle_facts(snapshot)
     high_values = tuple(_as_float(candle["high"], "high", index) for index, candle in enumerate(candles))
     low_values = tuple(_as_float(candle["low"], "low", index) for index, candle in enumerate(candles))
     latest_close = _as_float(candles[-1]["close"], "close", len(candles) - 1)
@@ -138,6 +139,7 @@ def _build_structural_evidence(
         "high_low_range": max(high_values) - min(low_values),
         "data_quality_status": snapshot.data_quality_status.value,
         "ohlcv_integrity": ohlcv_integrity,
+        "latest_candle_facts": latest_candle_facts,
     }
 
     return StructuralEvidence(
@@ -265,6 +267,20 @@ def _ohlcv_integrity_context(snapshot: MarketSnapshot) -> dict[str, Any]:
         "latest_candle_timestamp": latest_timestamp,
         "malformed_candle_indexes": tuple(malformed_candle_indexes),
         "missing_fields_by_candle_index": missing_fields_by_index,
+    }
+
+
+def _latest_candle_facts(snapshot: MarketSnapshot) -> dict[str, Any]:
+    latest_index = len(snapshot.ohlcv) - 1
+    latest_candle = snapshot.ohlcv[latest_index]
+
+    return {
+        "timestamp": latest_candle["timestamp"],
+        "open": _as_float(latest_candle["open"], "open", latest_index),
+        "high": _as_float(latest_candle["high"], "high", latest_index),
+        "low": _as_float(latest_candle["low"], "low", latest_index),
+        "close": _as_float(latest_candle["close"], "close", latest_index),
+        "volume": _as_float(latest_candle["volume"], "volume", latest_index),
     }
 
 
