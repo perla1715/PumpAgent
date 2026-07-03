@@ -163,7 +163,7 @@ confidence, decisions, alerts, or trading instructions.
 
 Scanner output can use the helper that prints:
 
-`SYMBOL | STATE | price | volume | oi`
+`SYMBOL | STATE | CONF=78% | price | volume | oi`
 
 ---
 

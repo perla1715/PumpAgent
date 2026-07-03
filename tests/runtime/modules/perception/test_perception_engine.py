@@ -111,7 +111,10 @@ class PerceptionEngineTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(line, "BTCUSDT | IGNITION | 100.0 | 42.0 | 1200.5")
+        self.assertEqual(
+            line,
+            "BTCUSDT | IGNITION | CONF=50% | 100.0 | 42.0 | 1200.5",
+        )
 
     def test_perception_evidence_reads_market_snapshot(self) -> None:
         event = make_event_with_market_snapshot()

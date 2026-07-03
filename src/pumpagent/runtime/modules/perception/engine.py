@@ -18,6 +18,11 @@ from pumpagent.runtime.domain import (
     StructuralEvidence,
 )
 from pumpagent.runtime.domain.enums import EvidenceStrength, UncertaintyLevel
+from pumpagent.runtime.modules.market_metrics import (
+    calculate_confidence,
+    metric_as_float,
+    metric_value,
+)
 
 
 REQUIRED_OHLCV_FIELDS = ("timestamp", "open", "high", "low", "close", "volume")
@@ -52,10 +57,10 @@ class PerceptionEvidenceResult:
 def detect_market_state(data: Any) -> str:
     """Classify the current market state from objective market-change metrics."""
 
-    price_change_1m = _metric_as_float(data, "price_change_1m")
-    price_change_3m = _metric_as_float(data, "price_change_3m")
-    volume_spike_ratio = _metric_as_float(data, "volume_spike_ratio")
-    oi_change_1m = _metric_as_float(data, "oi_change_1m")
+    price_change_1m = metric_as_float(data, "price_change_1m")
+    price_change_3m = metric_as_float(data, "price_change_3m")
+    volume_spike_ratio = metric_as_float(data, "volume_spike_ratio")
+    oi_change_1m = metric_as_float(data, "oi_change_1m")
 
     if (
         price_change_1m is not None
@@ -94,14 +99,15 @@ def format_market_state_scan_line(data: Any) -> str:
     """Format one market state scan line for console output."""
 
     state = detect_market_state(data)
-    symbol = _metric_value(data, "symbol", default="UNKNOWN")
-    price = _metric_value(data, "price", default=None)
-    volume = _metric_value(data, "volume", default=None)
-    oi = _metric_value(data, "open_interest", default=None)
+    confidence = calculate_confidence(data)
+    symbol = metric_value(data, "symbol", default="UNKNOWN")
+    price = metric_value(data, "price", default=None)
+    volume = metric_value(data, "volume", default=None)
+    oi = metric_value(data, "open_interest", default=None)
     if oi is None:
-        oi = _metric_value(data, "oi", default=None)
+        oi = metric_value(data, "oi", default=None)
 
-    return f"{symbol} | {state} | {price} | {volume} | {oi}"
+    return f"{symbol} | {state} | CONF={confidence}% | {price} | {volume} | {oi}"
 
 
 def print_market_state_scan(markets: Iterable[Any]) -> None:
@@ -455,28 +461,6 @@ def _available_participation_metrics(snapshot: MarketSnapshot) -> tuple[str, ...
         if metric in snapshot.optional_market_metrics:
             available.append(metric)
     return tuple(available)
-
-
-def _metric_value(data: Any, key: str, *, default: Any) -> Any:
-    if isinstance(data, Mapping):
-        return data.get(key, default)
-
-    optional_market_metrics = getattr(data, "optional_market_metrics", None)
-    if isinstance(optional_market_metrics, Mapping) and key in optional_market_metrics:
-        return optional_market_metrics[key]
-
-    return getattr(data, key, default)
-
-
-def _metric_as_float(data: Any, key: str) -> float | None:
-    value = _metric_value(data, key, default=None)
-    if value is None:
-        return None
-
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _missing_evidence(missing_fields: tuple[str, ...]) -> tuple[str, ...]:

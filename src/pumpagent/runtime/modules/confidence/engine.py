@@ -18,6 +18,7 @@ from pumpagent.runtime.domain.enums import (
     ConfidenceLevel,
     UncertaintyLevel,
 )
+from pumpagent.runtime.modules.market_metrics import calculate_confidence
 
 
 class ConfidenceError(ValueError):

@@ -25,6 +25,7 @@ from pumpagent.runtime.modules.confidence import (
     ConfidenceError,
     add_confidence_assessment,
     build_confidence_assessment,
+    calculate_confidence,
 )
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
@@ -53,6 +54,61 @@ def make_event_with_scenario_probability() -> RuntimeEvent:
 
 
 class ConfidenceEngineTests(unittest.TestCase):
+    def test_very_strong_signal(self) -> None:
+        confidence = calculate_confidence(
+            {
+                "price_change_1m": 2.1,
+                "volume_spike_ratio": 10.1,
+                "oi_change_1m": 2.1,
+            }
+        )
+
+        self.assertEqual(confidence, 90)
+
+    def test_medium_signal(self) -> None:
+        confidence = calculate_confidence(
+            {
+                "price_change_1m": 1.1,
+                "volume_spike_ratio": 5.1,
+                "oi_change_1m": 0.6,
+            }
+        )
+
+        self.assertEqual(confidence, 60)
+
+    def test_weak_signal(self) -> None:
+        confidence = calculate_confidence(
+            {
+                "price_change_1m": 0.1,
+                "volume_spike_ratio": 2.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        self.assertEqual(confidence, 30)
+
+    def test_zero_signal(self) -> None:
+        confidence = calculate_confidence(
+            {
+                "price_change_1m": 0.0,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(confidence, 0)
+
+    def test_confidence_never_exceeds_100(self) -> None:
+        confidence = calculate_confidence(
+            {
+                "price_change_1m": 100.0,
+                "volume_spike_ratio": 100.0,
+                "oi_change_1m": 100.0,
+            }
+        )
+
+        self.assertLessEqual(confidence, 100)
+
     def test_confidence_reads_hypothesis_agent_state_and_scenario(self) -> None:
         event = make_event_with_scenario_probability()
 

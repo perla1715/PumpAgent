@@ -341,6 +341,18 @@ Confidence can:
 
 The agent never falls in love with its own prediction.
 
+### Confidence Engine (MVP)
+
+The first confidence layer is a simple numeric heuristic for scanner output.
+It reads price change, volume spike ratio, and open interest change, then
+returns an integer score from 0 to 100.
+
+This MVP is intentionally deterministic. Each metric category contributes at
+most one threshold score, so price, volume, and open interest each contribute a
+maximum of 30 points. It is not calibrated, not evidence-weighted, and not a
+final reliability model. Later versions should replace or validate it with
+evidence-based confidence scoring.
+
 ---
 
 ## 7. Decision / Alert
