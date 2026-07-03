@@ -163,7 +163,10 @@ confidence, decisions, alerts, or trading instructions.
 
 Scanner output can use the helper that prints:
 
-`SYMBOL | STATE | CONF=78% | price | volume | oi`
+`SYMBOL | STATE | CONF=78% | price | volume | oi | Evidence: + Price increasing; + Volume above average; - OI not increasing`
+
+The evidence text is explanatory only. It does not change state detection,
+confidence scoring, hypotheses, decisions, alerts, or trading instructions.
 
 ---
 

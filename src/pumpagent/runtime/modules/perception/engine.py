@@ -18,6 +18,7 @@ from pumpagent.runtime.domain import (
     StructuralEvidence,
 )
 from pumpagent.runtime.domain.enums import EvidenceStrength, UncertaintyLevel
+from pumpagent.runtime.modules.evidence import collect_evidence, format_evidence
 from pumpagent.runtime.modules.market_metrics import (
     calculate_confidence,
     metric_as_float,
@@ -106,8 +107,12 @@ def format_market_state_scan_line(data: Any) -> str:
     oi = metric_value(data, "open_interest", default=None)
     if oi is None:
         oi = metric_value(data, "oi", default=None)
+    evidence = format_evidence(collect_evidence(data))
 
-    return f"{symbol} | {state} | CONF={confidence}% | {price} | {volume} | {oi}"
+    return (
+        f"{symbol} | {state} | CONF={confidence}% | {price} | {volume} | {oi} "
+        f"| Evidence: {evidence}"
+    )
 
 
 def print_market_state_scan(markets: Iterable[Any]) -> None:

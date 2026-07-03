@@ -113,7 +113,9 @@ class PerceptionEngineTests(unittest.TestCase):
 
         self.assertEqual(
             line,
-            "BTCUSDT | IGNITION | CONF=50% | 100.0 | 42.0 | 1200.5",
+            "BTCUSDT | IGNITION | CONF=50% | 100.0 | 42.0 | 1200.5 "
+            "| Evidence: + Price increasing; + Volume above average; "
+            "+ OI increasing",
         )
 
     def test_perception_evidence_reads_market_snapshot(self) -> None:

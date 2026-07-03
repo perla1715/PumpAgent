@@ -355,7 +355,26 @@ evidence-based confidence scoring.
 
 ---
 
-## 7. Decision / Alert
+## 7. Evidence Engine
+
+Explains which observed market metrics supported or weakened the current scan
+result.
+
+Evidence can:
+
+- mark price as increasing or not increasing;
+- mark volume as above average or not above average;
+- mark open interest as increasing or not increasing.
+
+The Evidence Engine is an explanation layer only. It does not classify market
+state, calculate confidence, create hypotheses, or make decisions.
+
+In the MVP, Evidence supports scanner output and is not yet a dedicated
+`RuntimeEvent` section.
+
+---
+
+## 8. Decision / Alert
 
 Produces non-execution operational outputs.
 
@@ -375,7 +394,7 @@ The human always has the final decision.
 
 ---
 
-## 8. Learning Memory
+## 9. Learning Memory
 
 Learning Memory is not part of the current Runtime Orchestrator path.
 
