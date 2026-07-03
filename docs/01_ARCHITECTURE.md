@@ -178,6 +178,10 @@ Runtime logging is currently a side-effect-free serialization layer.
 plain dictionary with cycle identity, timestamp, market identity, state,
 hypothesis, confidence, evidence, and agent state identity fields.
 
+The current schema version is `runtime_cycle_v1`. Future changes to the log
+shape should create a new schema version instead of silently changing existing
+fields.
+
 The serializer does not write files, use a database, call external services, or
 modify the cycle result. Persistence can be added later behind a separate
 storage boundary.

@@ -24,6 +24,7 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
 
         serialized = serialize_agent_cycle_result(result)
 
+        self.assertEqual(serialized["schema_version"], "runtime_cycle_v1")
         self.assertEqual(serialized["event_id"], result.event_id)
         self.assertEqual(serialized["timestamp"], result.timestamp.isoformat())
         self.assertEqual(serialized["symbol"], "BTCUSDT")
@@ -36,6 +37,33 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         self.assertEqual(serialized["confidence"], 50)
         self.assertEqual(serialized["agent_state_event_id"], result.agent_state.event_id)
         self.assertEqual(len(serialized["evidence"]), 3)
+
+    def test_schema_version_is_present(self) -> None:
+        serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
+
+        self.assertIn("schema_version", serialized)
+        self.assertEqual(serialized["schema_version"], "runtime_cycle_v1")
+
+    def test_existing_serialized_fields_remain_backward_compatible(self) -> None:
+        serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
+
+        expected_fields = {
+            "schema_version",
+            "event_id",
+            "timestamp",
+            "symbol",
+            "exchange",
+            "timeframe",
+            "previous_state",
+            "new_state",
+            "hypothesis_id",
+            "hypothesis_status",
+            "confidence",
+            "evidence",
+            "agent_state_event_id",
+        }
+
+        self.assertEqual(set(serialized), expected_fields)
 
     def test_serialization_is_deterministic(self) -> None:
         result = run_agent_cycle(make_snapshot())
