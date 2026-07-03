@@ -170,6 +170,18 @@ This result is a deterministic in-memory object. Runtime logging is represented
 as returned messages only; the loop does not write logs, use a database, call
 Telegram, or execute trades.
 
+### Runtime Logging MVP
+
+Runtime logging is currently a side-effect-free serialization layer.
+
+`serialize_agent_cycle_result(result)` converts an `AgentCycleResult` into a
+plain dictionary with cycle identity, timestamp, market identity, state,
+hypothesis, confidence, evidence, and agent state identity fields.
+
+The serializer does not write files, use a database, call external services, or
+modify the cycle result. Persistence can be added later behind a separate
+storage boundary.
+
 `AgentState` is the canonical state object for the runtime loop. The
 compatibility `previous_state` and `new_state` strings are derived from
 `AgentState.previous_state` and `AgentState.current_state`.
