@@ -166,6 +166,9 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 - timestamp;
 - watchlist action;
 - watchlist observation count;
+- temporal confidence;
+- confidence trend;
+- confidence delta;
 - log messages.
 
 This result is a deterministic in-memory object. Runtime logging is represented
@@ -214,6 +217,31 @@ confidence, event id, and `last_updated` timestamp.
 Unknown states are ignored. Expiration policies are not implemented in the MVP;
 only explicit removal is supported. The watchlist does not persist data, use a
 database, call Telegram, or run asynchronously.
+
+### Temporal Confidence Engine MVP
+
+The Temporal Confidence Engine tracks confidence evolution for watchlisted
+markets across runtime cycles.
+
+Runtime order:
+
+`Runtime -> Watchlist -> Temporal Confidence -> AgentCycleResult`
+
+Temporal confidence compares the previous confidence for a watchlist entry with
+the current confidence and reports:
+
+- current confidence;
+- previous confidence;
+- confidence delta;
+- trend;
+- update count;
+- last updated timestamp.
+
+Supported trends are `IMPROVING`, `STABLE`, `WEAKENING`, and `UNKNOWN`.
+
+Temporal confidence is diagnostic only. It does not change Agent State
+transitions, create decisions, persist data, use a database, call Telegram, or
+run asynchronously.
 
 ---
 

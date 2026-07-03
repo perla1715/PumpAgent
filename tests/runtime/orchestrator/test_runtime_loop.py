@@ -13,6 +13,11 @@ if str(SRC) not in sys.path:
 
 from pumpagent.runtime.domain import MarketSnapshot
 from pumpagent.runtime.domain.enums import AgentStateType, DataQualityStatus
+from pumpagent.runtime.modules.temporal_confidence import (
+    CONFIDENCE_TREND_IMPROVING,
+    CONFIDENCE_TREND_UNKNOWN,
+    CONFIDENCE_TREND_WEAKENING,
+)
 from pumpagent.runtime.orchestrator import (
     AgentCycleResult,
     RuntimeOrchestrator,
@@ -97,6 +102,9 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.timestamp, result.snapshot.timestamp)
         self.assertEqual(result.watchlist_action, "REGISTERED")
         self.assertEqual(result.watchlist_observation_count, 1)
+        self.assertIsNotNone(result.temporal_confidence)
+        self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
+        self.assertIsNone(result.confidence_delta)
 
     def test_missing_data(self) -> None:
         snapshot = make_snapshot(include_market_metrics=False)
@@ -110,6 +118,9 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(len(result.hypothesis.contradicting_evidence), 3)
         self.assertEqual(result.watchlist_action, "NONE")
         self.assertEqual(result.watchlist_observation_count, 0)
+        self.assertIsNone(result.temporal_confidence)
+        self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
+        self.assertIsNone(result.confidence_delta)
 
     def test_unchanged_hypothesis(self) -> None:
         snapshot = make_snapshot()
@@ -165,9 +176,51 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(first.watchlist_action, "REGISTERED")
         self.assertEqual(second.watchlist_action, "UPDATED")
         self.assertEqual(second.watchlist_observation_count, 2)
+        self.assertIsNotNone(second.temporal_confidence)
+        self.assertEqual(second.temporal_confidence.update_count, 2)
         self.assertIsNotNone(entry)
         self.assertEqual(entry.observation_count, 2)
         self.assertEqual(entry.event_id, second.event_id)
+
+    def test_runtime_temporal_confidence_improves(self) -> None:
+        orchestrator = RuntimeOrchestrator()
+        first = orchestrator.process_market_update(make_snapshot())
+
+        second = orchestrator.process_market_update(
+            make_snapshot(
+                price_change_1m=2.1,
+                price_change_3m=2.5,
+                volume_spike_ratio=10.1,
+                oi_change_1m=2.1,
+            ),
+            previous_state=first.new_state,
+            previous_hypothesis=first.hypothesis,
+        )
+
+        self.assertEqual(second.confidence, 90)
+        self.assertEqual(second.confidence_delta, 40)
+        self.assertEqual(second.confidence_trend, CONFIDENCE_TREND_IMPROVING)
+
+    def test_runtime_temporal_confidence_weakens(self) -> None:
+        orchestrator = RuntimeOrchestrator()
+        first = orchestrator.process_market_update(
+            make_snapshot(
+                price_change_1m=2.1,
+                price_change_3m=2.5,
+                volume_spike_ratio=10.1,
+                oi_change_1m=2.1,
+            )
+        )
+
+        second = orchestrator.process_market_update(
+            make_snapshot(),
+            previous_state=first.new_state,
+            previous_hypothesis=first.hypothesis,
+        )
+
+        self.assertEqual(second.confidence, 50)
+        self.assertEqual(second.confidence_delta, -40)
+        self.assertEqual(second.confidence_trend, CONFIDENCE_TREND_WEAKENING)
 
     def test_hypothesis_update(self) -> None:
         previous = run_agent_cycle(make_snapshot()).hypothesis

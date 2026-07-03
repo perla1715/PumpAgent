@@ -25,6 +25,11 @@ from pumpagent.runtime.modules.market_efficiency import build_market_efficiency_
 from pumpagent.runtime.modules.market_metrics import calculate_confidence
 from pumpagent.runtime.modules.perception import build_observation_package
 from pumpagent.runtime.modules.structure import build_structural_evidence
+from pumpagent.runtime.modules.temporal_confidence import (
+    CONFIDENCE_TREND_UNKNOWN,
+    TemporalConfidenceManager,
+    TemporalConfidenceState,
+)
 from pumpagent.runtime.modules.watchlist import WatchlistManager
 
 
@@ -43,14 +48,22 @@ class AgentCycleResult:
     timestamp: datetime
     watchlist_action: str
     watchlist_observation_count: int
+    temporal_confidence: TemporalConfidenceState | None
+    confidence_trend: str
+    confidence_delta: int | None
     log_messages: tuple[str, ...] = ()
 
 
 class RuntimeOrchestrator:
     """Coordinate one side-effect-free agent reasoning cycle."""
 
-    def __init__(self, watchlist: WatchlistManager | None = None) -> None:
+    def __init__(
+        self,
+        watchlist: WatchlistManager | None = None,
+        temporal_confidence: TemporalConfidenceManager | None = None,
+    ) -> None:
         self.watchlist = watchlist or WatchlistManager()
+        self.temporal_confidence = temporal_confidence or TemporalConfidenceManager()
 
     def process_market_update(
         self,
@@ -88,6 +101,14 @@ class RuntimeOrchestrator:
             confidence=confidence,
             event_id=event_id,
         )
+        temporal_confidence = _update_temporal_confidence(
+            self.temporal_confidence,
+            self.watchlist.get(
+                symbol=snapshot.symbol,
+                exchange=snapshot.exchange,
+                timeframe=snapshot.timeframe,
+            ),
+        )
 
         return AgentCycleResult(
             event_id=event_id,
@@ -103,6 +124,17 @@ class RuntimeOrchestrator:
             timestamp=snapshot.timestamp,
             watchlist_action=watchlist_action,
             watchlist_observation_count=watchlist_observation_count,
+            temporal_confidence=temporal_confidence,
+            confidence_trend=(
+                temporal_confidence.trend
+                if temporal_confidence is not None
+                else CONFIDENCE_TREND_UNKNOWN
+            ),
+            confidence_delta=(
+                temporal_confidence.confidence_delta
+                if temporal_confidence is not None
+                else None
+            ),
             log_messages=_cycle_log_messages(
                 previous_state=previous_state_name,
                 new_state=new_state_name,
@@ -157,6 +189,15 @@ def _combine_hypothesis_input(
     }
     data.update(snapshot.optional_market_metrics)
     return data
+
+
+def _update_temporal_confidence(
+    manager: TemporalConfidenceManager,
+    entry: object | None,
+) -> TemporalConfidenceState | None:
+    if entry is None:
+        return None
+    return manager.update(entry)
 
 
 def _cycle_event_id(snapshot: MarketSnapshot) -> str:
