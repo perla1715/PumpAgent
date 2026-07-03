@@ -13,6 +13,17 @@ from pumpagent.runtime.domain.enums import (
     StateTransitionStatus,
     UncertaintyLevel,
 )
+from pumpagent.runtime.modules.hypothesis import MarketHypothesis
+
+
+MARKET_STATE_TO_AGENT_STATE = {
+    "UNKNOWN": AgentStateType.UNKNOWN,
+    "IGNITION": AgentStateType.IGNITION,
+    "CONTINUATION_ALIVE": AgentStateType.CONTINUATION_ALIVE,
+    # TODO: Decide whether WEAKENING maps to CONTINUATION_SATURATION,
+    # FIRST_FAILURE_CANDIDATE, or a dedicated future state.
+    "WEAKENING": AgentStateType.UNKNOWN,
+}
 
 
 class AgentStateError(ValueError):
@@ -48,6 +59,39 @@ def build_agent_state(
         notes=(
             "Agent State Manager v0.1 describes only the current official "
             "state; Scenario Probability will evaluate possible next scenarios."
+        ),
+    )
+
+
+def build_agent_state_from_market_hypothesis(
+    hypothesis: MarketHypothesis,
+    *,
+    previous_state: AgentStateType = AgentStateType.UNKNOWN,
+) -> AgentState:
+    """Build canonical AgentState from a lightweight MarketHypothesis."""
+
+    current_state = _agent_state_type_from_market_state(hypothesis.market_state)
+    transition_status = _transition_status(previous_state, current_state)
+
+    return AgentState(
+        event_id=hypothesis.id,
+        current_state=current_state,
+        previous_state=previous_state,
+        state_transition_status=transition_status,
+        transition_reason=_market_hypothesis_transition_reason(
+            hypothesis,
+            current_state,
+        ),
+        supporting_evidence=hypothesis.supporting_evidence,
+        blocking_evidence=hypothesis.contradicting_evidence,
+        state_confidence_context=_confidence_level_from_score(
+            hypothesis.confidence_score,
+        ),
+        allowed_next_states=(),
+        rejected_state_transitions=_rejected_transitions(),
+        notes=(
+            "Agent State bridge maps lightweight market hypotheses into the "
+            "canonical AgentState domain object."
         ),
     )
 
@@ -104,6 +148,10 @@ def _current_state_from_hypothesis(hypothesis: HypothesisPackage) -> AgentStateT
     return AgentStateType.UNKNOWN
 
 
+def _agent_state_type_from_market_state(market_state: str) -> AgentStateType:
+    return MARKET_STATE_TO_AGENT_STATE.get(str(market_state), AgentStateType.UNKNOWN)
+
+
 def _transition_status(
     previous_state: AgentStateType,
     current_state: AgentStateType,
@@ -111,6 +159,29 @@ def _transition_status(
     if previous_state == current_state:
         return StateTransitionStatus.UNCHANGED
     return StateTransitionStatus.CHANGED
+
+
+def _market_hypothesis_transition_reason(
+    hypothesis: MarketHypothesis,
+    current_state: AgentStateType,
+) -> str:
+    if current_state == AgentStateType.UNKNOWN:
+        return (
+            "Market hypothesis state is unknown or conservatively unmapped: "
+            f"{hypothesis.market_state}."
+        )
+
+    return f"Canonical state mapped from market hypothesis state {hypothesis.market_state}."
+
+
+def _confidence_level_from_score(score: int) -> ConfidenceLevel:
+    if score >= 80:
+        return ConfidenceLevel.HIGH
+    if score >= 50:
+        return ConfidenceLevel.MEDIUM
+    if score > 0:
+        return ConfidenceLevel.LOW
+    return ConfidenceLevel.UNKNOWN
 
 
 def _transition_reason(

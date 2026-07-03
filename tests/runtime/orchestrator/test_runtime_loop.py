@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pumpagent.runtime.domain import MarketSnapshot
-from pumpagent.runtime.domain.enums import DataQualityStatus
+from pumpagent.runtime.domain.enums import AgentStateType, DataQualityStatus
 from pumpagent.runtime.orchestrator import (
     AgentCycleResult,
     RuntimeOrchestrator,
@@ -85,6 +85,8 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.hypothesis.label, "Ignition attempt")
         self.assertEqual(result.previous_state, "UNKNOWN")
         self.assertEqual(result.new_state, "IGNITION")
+        self.assertEqual(result.agent_state.current_state, AgentStateType.IGNITION)
+        self.assertEqual(result.agent_state.previous_state, AgentStateType.UNKNOWN)
         self.assertEqual(result.confidence, 50)
         self.assertEqual(len(result.evidence), 3)
         self.assertEqual(result.timestamp, result.snapshot.timestamp)
@@ -95,6 +97,7 @@ class RuntimeLoopTests(unittest.TestCase):
         result = RuntimeOrchestrator().process_market_update(snapshot)
 
         self.assertEqual(result.new_state, "UNKNOWN")
+        self.assertEqual(result.agent_state.current_state, AgentStateType.UNKNOWN)
         self.assertEqual(result.confidence, 0)
         self.assertEqual(result.hypothesis.label, "No clear hypothesis")
         self.assertEqual(len(result.hypothesis.contradicting_evidence), 3)
@@ -114,6 +117,15 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.hypothesis.status, "UPDATED")
         self.assertEqual(result.previous_state, "IGNITION")
         self.assertEqual(result.new_state, "IGNITION")
+        self.assertEqual(result.agent_state.previous_state, AgentStateType.IGNITION)
+        self.assertEqual(result.agent_state.current_state, AgentStateType.IGNITION)
+
+    def test_runtime_returns_canonical_agent_state(self) -> None:
+        result = run_agent_cycle(make_snapshot(), previous_state="unknown")
+
+        self.assertEqual(result.agent_state.current_state, AgentStateType.IGNITION)
+        self.assertEqual(result.new_state, result.agent_state.current_state.name)
+        self.assertEqual(result.previous_state, result.agent_state.previous_state.name)
 
     def test_hypothesis_update(self) -> None:
         previous = run_agent_cycle(make_snapshot()).hypothesis

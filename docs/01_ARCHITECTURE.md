@@ -94,7 +94,8 @@ AgentCycleResult
 The Runtime Orchestrator coordinates this reasoning loop for each market
 update. It receives one `MarketSnapshot`, builds structure and market
 efficiency evidence, combines them with snapshot metrics, builds the current
-hypothesis, updates the current state value, and returns an `AgentCycleResult`.
+hypothesis, maps the hypothesis state into canonical `AgentState`, and returns
+an `AgentCycleResult`.
 
 The Runtime Orchestrator does not make trading decisions, persist state,
 communicate with users, or call external services.
@@ -157,6 +158,7 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 - market efficiency result;
 - previous state;
 - new state;
+- canonical agent state;
 - hypothesis;
 - confidence;
 - evidence;
@@ -166,6 +168,14 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 This result is a deterministic in-memory object. Runtime logging is represented
 as returned messages only; the loop does not write logs, use a database, call
 Telegram, or execute trades.
+
+`AgentState` is the canonical state object for the runtime loop. The
+compatibility `previous_state` and `new_state` strings are derived from
+`AgentState.previous_state` and `AgentState.current_state`.
+
+Detected `WEAKENING` remains conservatively mapped to `AgentStateType.UNKNOWN`
+until a future transition decision assigns it to a formal state such as
+`CONTINUATION_SATURATION` or `FIRST_FAILURE_CANDIDATE`.
 
 ---
 

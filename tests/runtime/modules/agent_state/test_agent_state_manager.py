@@ -25,8 +25,10 @@ from pumpagent.runtime.modules.agent_state import (
     AgentStateError,
     add_agent_state,
     build_agent_state,
+    build_agent_state_from_market_hypothesis,
 )
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
+from pumpagent.runtime.modules.hypothesis import build_hypothesis
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
@@ -180,6 +182,70 @@ class AgentStateManagerTests(unittest.TestCase):
             updated.agent_state.state_transition_status,
             StateTransitionStatus.CHANGED,
         )
+
+    def test_market_hypothesis_uppercase_state_normalization(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
+
+        self.assertEqual(agent_state.current_state, AgentStateType.IGNITION)
+        self.assertEqual(agent_state.previous_state, AgentStateType.UNKNOWN)
+        self.assertEqual(
+            agent_state.supporting_evidence,
+            hypothesis.supporting_evidence,
+        )
+        self.assertEqual(
+            agent_state.blocking_evidence,
+            hypothesis.contradicting_evidence,
+        )
+        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.MEDIUM)
+
+    def test_market_hypothesis_unknown_state_fallback(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.0,
+                "price_change_3m": 0.0,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
+
+        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.UNKNOWN)
+        self.assertIn("conservatively unmapped", agent_state.transition_reason)
+
+    def test_market_hypothesis_weakening_conservative_fallback(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=AgentStateType.CONTINUATION_ALIVE,
+        )
+
+        self.assertEqual(hypothesis.market_state, "WEAKENING")
+        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertEqual(agent_state.previous_state, AgentStateType.CONTINUATION_ALIVE)
+        self.assertEqual(
+            agent_state.state_transition_status,
+            StateTransitionStatus.CHANGED,
+        )
+        self.assertIn("WEAKENING", agent_state.transition_reason)
 
     def test_agent_state_does_not_import_later_runtime_contracts(self) -> None:
         tree = ast.parse(AGENT_STATE_MANAGER.read_text(encoding="utf-8"))

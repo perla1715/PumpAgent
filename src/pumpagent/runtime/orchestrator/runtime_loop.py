@@ -12,11 +12,14 @@ from datetime import datetime
 from typing import Any
 
 from pumpagent.runtime.domain import (
+    AgentState,
     MarketEfficiencyEvidence,
     MarketSnapshot,
     StructuralEvidence,
 )
+from pumpagent.runtime.domain.enums import AgentStateType
 from pumpagent.runtime.modules.evidence import Evidence, collect_evidence
+from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
 from pumpagent.runtime.modules.hypothesis import MarketHypothesis, build_hypothesis
 from pumpagent.runtime.modules.market_efficiency import build_market_efficiency_evidence
 from pumpagent.runtime.modules.market_metrics import calculate_confidence
@@ -31,6 +34,7 @@ class AgentCycleResult:
     market_result: MarketEfficiencyEvidence
     previous_state: str
     new_state: str
+    agent_state: AgentState
     hypothesis: MarketHypothesis
     confidence: int
     evidence: tuple[Evidence, ...]
@@ -59,21 +63,27 @@ class RuntimeOrchestrator:
         hypothesis = build_hypothesis(hypothesis_input, previous=previous_hypothesis)
         confidence = calculate_confidence(hypothesis_input)
         evidence = tuple(collect_evidence(hypothesis_input))
-        new_state = hypothesis.market_state
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=_agent_state_type_from_value(previous_state),
+        )
+        previous_state_name = agent_state.previous_state.name
+        new_state_name = agent_state.current_state.name
 
         return AgentCycleResult(
             snapshot=snapshot,
             structure_result=structure_result,
             market_result=market_result,
-            previous_state=previous_state,
-            new_state=new_state,
+            previous_state=previous_state_name,
+            new_state=new_state_name,
+            agent_state=agent_state,
             hypothesis=hypothesis,
             confidence=confidence,
             evidence=evidence,
             timestamp=snapshot.timestamp,
             log_messages=_cycle_log_messages(
-                previous_state=previous_state,
-                new_state=new_state,
+                previous_state=previous_state_name,
+                new_state=new_state_name,
                 hypothesis=hypothesis,
             ),
         )
@@ -125,3 +135,15 @@ def _combine_hypothesis_input(
     }
     data.update(snapshot.optional_market_metrics)
     return data
+
+
+def _agent_state_type_from_value(value: str | AgentStateType) -> AgentStateType:
+    if isinstance(value, AgentStateType):
+        return value
+
+    normalized = str(value).lower()
+    for state in AgentStateType:
+        if normalized in (state.name.lower(), state.value):
+            return state
+
+    return AgentStateType.UNKNOWN
