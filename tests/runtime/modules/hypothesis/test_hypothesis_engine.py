@@ -18,7 +18,9 @@ from pumpagent.runtime.domain import HypothesisPackage, RuntimeEvent
 from pumpagent.runtime.domain.enums import ConfidenceLevel, UncertaintyLevel
 from pumpagent.runtime.modules.hypothesis import (
     HypothesisError,
+    MarketHypothesis,
     add_hypothesis_package,
+    build_hypothesis,
     build_hypothesis_package,
 )
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
@@ -43,6 +45,132 @@ def make_event_with_evidence() -> RuntimeEvent:
 
 
 class HypothesisEngineTests(unittest.TestCase):
+    def test_created_hypothesis(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        self.assertIsInstance(hypothesis, MarketHypothesis)
+        self.assertEqual(hypothesis.label, "Ignition attempt")
+        self.assertEqual(hypothesis.market_state, "IGNITION")
+        self.assertEqual(hypothesis.confidence_score, 50)
+        self.assertEqual(hypothesis.status, "CREATED")
+        self.assertIsNone(hypothesis.previous_hypothesis_id)
+        self.assertIn("Ignition attempt", hypothesis.summary)
+
+    def test_updated_same_label_higher_confidence(self) -> None:
+        previous = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 2.1,
+                "price_change_3m": 2.5,
+                "volume_spike_ratio": 10.1,
+                "oi_change_1m": 2.1,
+            },
+            previous=previous,
+        )
+
+        self.assertEqual(hypothesis.label, previous.label)
+        self.assertEqual(hypothesis.confidence_score, 90)
+        self.assertEqual(hypothesis.status, "UPDATED")
+
+    def test_weakened_same_label_lower_confidence(self) -> None:
+        previous = build_hypothesis(
+            {
+                "price_change_1m": 2.1,
+                "price_change_3m": 2.5,
+                "volume_spike_ratio": 10.1,
+                "oi_change_1m": 2.1,
+            }
+        )
+
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            },
+            previous=previous,
+        )
+
+        self.assertEqual(hypothesis.label, previous.label)
+        self.assertEqual(hypothesis.confidence_score, 50)
+        self.assertEqual(hypothesis.status, "WEAKENED")
+
+    def test_replaced_different_label(self) -> None:
+        previous = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            },
+            previous=previous,
+        )
+
+        self.assertEqual(hypothesis.label, "Move is weakening")
+        self.assertEqual(hypothesis.status, "REPLACED")
+        self.assertEqual(hypothesis.previous_hypothesis_id, previous.id)
+
+    def test_unknown_hypothesis(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.0,
+                "price_change_3m": 0.0,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(hypothesis.label, "No clear hypothesis")
+        self.assertEqual(hypothesis.market_state, "UNKNOWN")
+        self.assertEqual(hypothesis.confidence_score, 0)
+        self.assertEqual(hypothesis.status, "CREATED")
+
+    def test_supporting_and_contradicting_evidence_split(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.0,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(hypothesis.supporting_evidence, ("Price increasing",))
+        self.assertEqual(
+            hypothesis.contradicting_evidence,
+            ("Volume not above average", "OI not increasing"),
+        )
+        self.assertIn("Supports: Price increasing.", hypothesis.summary)
+        self.assertIn(
+            "Contradicts: Volume not above average, OI not increasing.",
+            hypothesis.summary,
+        )
+
     def test_hypothesis_reads_structural_and_market_efficiency_evidence(self) -> None:
         event = make_event_with_evidence()
 

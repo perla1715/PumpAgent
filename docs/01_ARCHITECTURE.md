@@ -309,6 +309,20 @@ The Hypothesis Engine explains what is most likely happening now.
 
 It does not own future scenario probability distribution.
 
+### Hypothesis Engine (MVP)
+
+The first lightweight Hypothesis Engine consumes market state, confidence, and
+evidence to produce a working interpretation.
+
+Core Runtime thinking is:
+
+`Agent = State + Confidence + Evidence + Hypothesis`
+
+The MVP hypothesis is not a prediction and not a decision. It explains the
+current market condition, tracks whether the explanation was created, updated,
+weakened, or replaced, and preserves the evidence that supports or contradicts
+the interpretation.
+
 ---
 
 ## 5. Scenario Probability Engine
