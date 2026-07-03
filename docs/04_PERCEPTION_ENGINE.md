@@ -139,6 +139,32 @@ used.
 They do not classify direction, state, strength, weakness, continuation,
 failure, pump, dump, probability, confidence, alerts, or trading action.
 
+## Market State Detection (MVP)
+
+Perception now includes a simple deterministic market state detector for
+scanner output.
+
+`detect_market_state(data)` reads:
+
+- `price_change_1m`
+- `price_change_3m`
+- `volume_spike_ratio`
+- `oi_change_1m`
+
+It returns one of:
+
+- `IGNITION`
+- `CONTINUATION_ALIVE`
+- `WEAKENING`
+- `UNKNOWN`
+
+The detector is rule-based only. It does not create hypotheses, probabilities,
+confidence, decisions, alerts, or trading instructions.
+
+Scanner output can use the helper that prints:
+
+`SYMBOL | STATE | price | volume | oi`
+
 ---
 
 ## Observation Principles

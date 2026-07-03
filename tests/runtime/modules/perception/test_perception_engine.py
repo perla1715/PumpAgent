@@ -29,6 +29,8 @@ from pumpagent.runtime.modules.perception import (
     add_perception_evidence,
     build_observation_package,
     build_perception_evidence,
+    detect_market_state,
+    format_market_state_scan_line,
 )
 
 
@@ -45,6 +47,72 @@ def make_event_with_market_snapshot() -> RuntimeEvent:
 
 
 class PerceptionEngineTests(unittest.TestCase):
+    def test_ignition(self) -> None:
+        state = detect_market_state(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        self.assertEqual(state, "IGNITION")
+
+    def test_continuation_alive(self) -> None:
+        state = detect_market_state(
+            {
+                "price_change_1m": 0.5,
+                "price_change_3m": 2.1,
+                "volume_spike_ratio": 2.1,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(state, "CONTINUATION_ALIVE")
+
+    def test_weakening(self) -> None:
+        state = detect_market_state(
+            {
+                "price_change_1m": 0.2,
+                "price_change_3m": 0.1,
+                "volume_spike_ratio": 1.9,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(state, "WEAKENING")
+
+    def test_unknown(self) -> None:
+        state = detect_market_state(
+            {
+                "price_change_1m": 0.0,
+                "price_change_3m": 0.0,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        self.assertEqual(state, "UNKNOWN")
+
+    def test_market_state_scan_line_includes_symbol_state_price_volume_and_oi(
+        self,
+    ) -> None:
+        line = format_market_state_scan_line(
+            {
+                "symbol": "BTCUSDT",
+                "price": 100.0,
+                "volume": 42.0,
+                "open_interest": 1200.5,
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        self.assertEqual(line, "BTCUSDT | IGNITION | 100.0 | 42.0 | 1200.5")
+
     def test_perception_evidence_reads_market_snapshot(self) -> None:
         event = make_event_with_market_snapshot()
 
