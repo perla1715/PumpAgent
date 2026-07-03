@@ -5,9 +5,17 @@ from pumpagent.runtime.orchestrator.fixture_orchestrator import (
     run_fixture_market_data_cycle,
     run_fixture_runtime_cycle,
 )
+from pumpagent.runtime.orchestrator.runtime_loop import (
+    AgentCycleResult,
+    RuntimeOrchestrator,
+    run_agent_cycle,
+)
 
 __all__ = [
+    "AgentCycleResult",
     "FixtureRuntimeStage",
+    "RuntimeOrchestrator",
+    "run_agent_cycle",
     "run_fixture_market_data_cycle",
     "run_fixture_runtime_cycle",
 ]

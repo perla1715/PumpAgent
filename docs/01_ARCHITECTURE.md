@@ -73,7 +73,11 @@ MarketSnapshot
 
 ↓
 
-Perception Engine
+Structure Engine
+
+↓
+
+Market Efficiency Engine
 
 ↓
 
@@ -81,25 +85,27 @@ Hypothesis Engine
 
 ↓
 
-Agent State Engine
+State Update
 
 ↓
 
-Scenario Probability Engine
+AgentCycleResult
 
-↓
+The Runtime Orchestrator coordinates this reasoning loop for each market
+update. It receives one `MarketSnapshot`, builds structure and market
+efficiency evidence, combines them with snapshot metrics, builds the current
+hypothesis, updates the current state value, and returns an `AgentCycleResult`.
 
-Confidence Engine
+The Runtime Orchestrator does not make trading decisions, persist state,
+communicate with users, or call external services.
 
-↓
+The older full Runtime Core modules for Agent State, Scenario Probability,
+Confidence Assessment, and Decision / Alert remain available as separate
+contracts while the lightweight runtime loop is established.
 
-Decision / Alert
-
-The current Runtime Orchestrator coordinates this flow only.
-
-It performs orchestration and immutable `RuntimeEvent` handoff. It does not
-perform market analysis, create hypotheses, calculate confidence, classify
-alerts, access Live Data, or execute trades.
+The fixture Runtime Orchestrator still supports immutable `RuntimeEvent`
+handoff for the older module contract path. It does not perform market
+analysis, classify alerts, access Live Data, or execute trades.
 
 Runtime Core currently ends at Decision / Alert.
 
@@ -141,6 +147,25 @@ Each Runtime module is deterministic, side-effect free, and owns exactly one
 RuntimeEvent section.
 
 No Runtime module mutates previous sections.
+
+## Agent Runtime Loop MVP
+
+The first complete agent reasoning cycle returns `AgentCycleResult` with:
+
+- snapshot;
+- structure result;
+- market efficiency result;
+- previous state;
+- new state;
+- hypothesis;
+- confidence;
+- evidence;
+- timestamp;
+- log messages.
+
+This result is a deterministic in-memory object. Runtime logging is represented
+as returned messages only; the loop does not write logs, use a database, call
+Telegram, or execute trades.
 
 ---
 
