@@ -25,6 +25,7 @@ from pumpagent.runtime.modules.market_efficiency import build_market_efficiency_
 from pumpagent.runtime.modules.market_metrics import calculate_confidence
 from pumpagent.runtime.modules.perception import build_observation_package
 from pumpagent.runtime.modules.structure import build_structural_evidence
+from pumpagent.runtime.modules.watchlist import WatchlistManager
 
 
 @dataclass(frozen=True)
@@ -40,11 +41,16 @@ class AgentCycleResult:
     confidence: int
     evidence: tuple[Evidence, ...]
     timestamp: datetime
+    watchlist_action: str
+    watchlist_observation_count: int
     log_messages: tuple[str, ...] = ()
 
 
 class RuntimeOrchestrator:
     """Coordinate one side-effect-free agent reasoning cycle."""
+
+    def __init__(self, watchlist: WatchlistManager | None = None) -> None:
+        self.watchlist = watchlist or WatchlistManager()
 
     def process_market_update(
         self,
@@ -72,6 +78,16 @@ class RuntimeOrchestrator:
         )
         previous_state_name = agent_state.previous_state.name
         new_state_name = agent_state.current_state.name
+        watchlist_action, watchlist_observation_count = self.watchlist.track_cycle(
+            symbol=snapshot.symbol,
+            exchange=snapshot.exchange,
+            timeframe=snapshot.timeframe,
+            timestamp=snapshot.timestamp,
+            agent_state=agent_state,
+            hypothesis=hypothesis,
+            confidence=confidence,
+            event_id=event_id,
+        )
 
         return AgentCycleResult(
             event_id=event_id,
@@ -85,6 +101,8 @@ class RuntimeOrchestrator:
             confidence=confidence,
             evidence=evidence,
             timestamp=snapshot.timestamp,
+            watchlist_action=watchlist_action,
+            watchlist_observation_count=watchlist_observation_count,
             log_messages=_cycle_log_messages(
                 previous_state=previous_state_name,
                 new_state=new_state_name,

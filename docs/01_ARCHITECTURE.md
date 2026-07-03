@@ -164,6 +164,8 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 - confidence;
 - evidence;
 - timestamp;
+- watchlist action;
+- watchlist observation count;
 - log messages.
 
 This result is a deterministic in-memory object. Runtime logging is represented
@@ -198,6 +200,20 @@ semantic hypothesis identifier.
 Detected `WEAKENING` remains conservatively mapped to `AgentStateType.UNKNOWN`
 until a future transition decision assigns it to a formal state such as
 `CONTINUATION_SATURATION` or `FIRST_FAILURE_CANDIDATE`.
+
+### Dynamic Watchlist MVP
+
+The Dynamic Watchlist tracks interesting markets across runtime cycles in
+memory only.
+
+Markets are registered when canonical `AgentState.current_state` is not
+`UNKNOWN`. Repeated interesting cycles update the existing watchlist entry,
+increment `observation_count`, and replace the latest state, hypothesis,
+confidence, event id, and `last_updated` timestamp.
+
+Unknown states are ignored. Expiration policies are not implemented in the MVP;
+only explicit removal is supported. The watchlist does not persist data, use a
+database, call Telegram, or run asynchronously.
 
 ---
 

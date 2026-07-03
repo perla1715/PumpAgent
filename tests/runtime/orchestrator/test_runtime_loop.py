@@ -95,6 +95,8 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.confidence, 50)
         self.assertEqual(len(result.evidence), 3)
         self.assertEqual(result.timestamp, result.snapshot.timestamp)
+        self.assertEqual(result.watchlist_action, "REGISTERED")
+        self.assertEqual(result.watchlist_observation_count, 1)
 
     def test_missing_data(self) -> None:
         snapshot = make_snapshot(include_market_metrics=False)
@@ -106,6 +108,8 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.confidence, 0)
         self.assertEqual(result.hypothesis.label, "No clear hypothesis")
         self.assertEqual(len(result.hypothesis.contradicting_evidence), 3)
+        self.assertEqual(result.watchlist_action, "NONE")
+        self.assertEqual(result.watchlist_observation_count, 0)
 
     def test_unchanged_hypothesis(self) -> None:
         snapshot = make_snapshot()
@@ -141,6 +145,29 @@ class RuntimeLoopTests(unittest.TestCase):
 
         self.assertEqual(first.event_id, second.event_id)
         self.assertEqual(first.agent_state.event_id, second.agent_state.event_id)
+
+    def test_runtime_updates_dynamic_watchlist(self) -> None:
+        orchestrator = RuntimeOrchestrator()
+        snapshot = make_snapshot()
+
+        first = orchestrator.process_market_update(snapshot)
+        second = orchestrator.process_market_update(
+            snapshot,
+            previous_state=first.new_state,
+            previous_hypothesis=first.hypothesis,
+        )
+        entry = orchestrator.watchlist.get(
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+        )
+
+        self.assertEqual(first.watchlist_action, "REGISTERED")
+        self.assertEqual(second.watchlist_action, "UPDATED")
+        self.assertEqual(second.watchlist_observation_count, 2)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.observation_count, 2)
+        self.assertEqual(entry.event_id, second.event_id)
 
     def test_hypothesis_update(self) -> None:
         previous = run_agent_cycle(make_snapshot()).hypothesis
