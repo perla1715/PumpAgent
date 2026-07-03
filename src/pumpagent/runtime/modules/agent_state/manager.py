@@ -66,15 +66,17 @@ def build_agent_state(
 def build_agent_state_from_market_hypothesis(
     hypothesis: MarketHypothesis,
     *,
+    event_id: str | None = None,
     previous_state: AgentStateType = AgentStateType.UNKNOWN,
 ) -> AgentState:
     """Build canonical AgentState from a lightweight MarketHypothesis."""
 
+    agent_state_event_id = event_id or hypothesis.id
     current_state = _agent_state_type_from_market_state(hypothesis.market_state)
     transition_status = _transition_status(previous_state, current_state)
 
     return AgentState(
-        event_id=hypothesis.id,
+        event_id=agent_state_event_id,
         current_state=current_state,
         previous_state=previous_state,
         state_transition_status=transition_status,

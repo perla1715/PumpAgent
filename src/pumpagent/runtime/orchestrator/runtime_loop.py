@@ -29,6 +29,7 @@ from pumpagent.runtime.modules.structure import build_structural_evidence
 
 @dataclass(frozen=True)
 class AgentCycleResult:
+    event_id: str
     snapshot: MarketSnapshot
     structure_result: StructuralEvidence
     market_result: MarketEfficiencyEvidence
@@ -52,6 +53,7 @@ class RuntimeOrchestrator:
         previous_state: str = "UNKNOWN",
         previous_hypothesis: MarketHypothesis | None = None,
     ) -> AgentCycleResult:
+        event_id = _cycle_event_id(snapshot)
         observations = build_observation_package(snapshot)
         structure_result = build_structural_evidence(observations)
         market_result = build_market_efficiency_evidence(observations)
@@ -65,12 +67,14 @@ class RuntimeOrchestrator:
         evidence = tuple(collect_evidence(hypothesis_input))
         agent_state = build_agent_state_from_market_hypothesis(
             hypothesis,
+            event_id=event_id,
             previous_state=_agent_state_type_from_value(previous_state),
         )
         previous_state_name = agent_state.previous_state.name
         new_state_name = agent_state.current_state.name
 
         return AgentCycleResult(
+            event_id=event_id,
             snapshot=snapshot,
             structure_result=structure_result,
             market_result=market_result,
@@ -135,6 +139,11 @@ def _combine_hypothesis_input(
     }
     data.update(snapshot.optional_market_metrics)
     return data
+
+
+def _cycle_event_id(snapshot: MarketSnapshot) -> str:
+    timestamp = snapshot.timestamp.isoformat()
+    return f"agent-cycle:{snapshot.exchange}:{snapshot.symbol}:{snapshot.timeframe}:{snapshot.event_id}:{timestamp}"
 
 
 def _agent_state_type_from_value(value: str | AgentStateType) -> AgentStateType:

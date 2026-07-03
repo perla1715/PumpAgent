@@ -80,6 +80,10 @@ class RuntimeLoopTests(unittest.TestCase):
 
         self.assertIsInstance(result, AgentCycleResult)
         self.assertEqual(result.snapshot.symbol, "BTCUSDT")
+        self.assertEqual(
+            result.event_id,
+            "agent-cycle:binance:BTCUSDT:1m:snapshot-1:2026-07-01T12:00:00+00:00",
+        )
         self.assertEqual(result.structure_result.trend_structure, "rising_close_sequence")
         self.assertIn("volume_available", result.market_result.supporting_evidence)
         self.assertEqual(result.hypothesis.label, "Ignition attempt")
@@ -87,6 +91,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.new_state, "IGNITION")
         self.assertEqual(result.agent_state.current_state, AgentStateType.IGNITION)
         self.assertEqual(result.agent_state.previous_state, AgentStateType.UNKNOWN)
+        self.assertEqual(result.agent_state.event_id, result.event_id)
         self.assertEqual(result.confidence, 50)
         self.assertEqual(len(result.evidence), 3)
         self.assertEqual(result.timestamp, result.snapshot.timestamp)
@@ -124,8 +129,18 @@ class RuntimeLoopTests(unittest.TestCase):
         result = run_agent_cycle(make_snapshot(), previous_state="unknown")
 
         self.assertEqual(result.agent_state.current_state, AgentStateType.IGNITION)
+        self.assertEqual(result.agent_state.event_id, result.event_id)
         self.assertEqual(result.new_state, result.agent_state.current_state.name)
         self.assertEqual(result.previous_state, result.agent_state.previous_state.name)
+
+    def test_runtime_event_id_is_stable_for_same_snapshot(self) -> None:
+        snapshot = make_snapshot()
+
+        first = run_agent_cycle(snapshot)
+        second = run_agent_cycle(snapshot)
+
+        self.assertEqual(first.event_id, second.event_id)
+        self.assertEqual(first.agent_state.event_id, second.agent_state.event_id)
 
     def test_hypothesis_update(self) -> None:
         previous = run_agent_cycle(make_snapshot()).hypothesis

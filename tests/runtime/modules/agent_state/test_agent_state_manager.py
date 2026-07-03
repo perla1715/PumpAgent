@@ -207,6 +207,37 @@ class AgentStateManagerTests(unittest.TestCase):
         )
         self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.MEDIUM)
 
+    def test_market_hypothesis_bridge_uses_provided_event_id(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            event_id="runtime-cycle-1",
+        )
+
+        self.assertEqual(agent_state.event_id, "runtime-cycle-1")
+
+    def test_market_hypothesis_bridge_falls_back_to_hypothesis_id(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 1.1,
+                "price_change_3m": 1.5,
+                "volume_spike_ratio": 8.1,
+                "oi_change_1m": 0.1,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
+
+        self.assertEqual(agent_state.event_id, hypothesis.id)
+
     def test_market_hypothesis_unknown_state_fallback(self) -> None:
         hypothesis = build_hypothesis(
             {

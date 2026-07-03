@@ -153,6 +153,7 @@ No Runtime module mutates previous sections.
 
 The first complete agent reasoning cycle returns `AgentCycleResult` with:
 
+- runtime event id;
 - snapshot;
 - structure result;
 - market efficiency result;
@@ -172,6 +173,11 @@ Telegram, or execute trades.
 `AgentState` is the canonical state object for the runtime loop. The
 compatibility `previous_state` and `new_state` strings are derived from
 `AgentState.previous_state` and `AgentState.current_state`.
+
+Each runtime loop cycle has a deterministic event id derived from snapshot
+identity, symbol, exchange, timeframe, and timestamp. This cycle event id is
+passed into `AgentState.event_id`, while `MarketHypothesis.id` remains a
+semantic hypothesis identifier.
 
 Detected `WEAKENING` remains conservatively mapped to `AgentStateType.UNKNOWN`
 until a future transition decision assigns it to a formal state such as
