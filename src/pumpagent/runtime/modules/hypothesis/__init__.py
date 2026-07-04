@@ -8,6 +8,7 @@ from pumpagent.runtime.modules.hypothesis.engine import (
     build_hypothesis_package,
 )
 from pumpagent.runtime.modules.hypothesis.snapshot import (
+    HypothesisHistory,
     HypothesisSnapshot,
     HypothesisSnapshotBuilder,
     build_hypothesis_snapshot,
@@ -15,6 +16,7 @@ from pumpagent.runtime.modules.hypothesis.snapshot import (
 
 __all__ = [
     "HypothesisError",
+    "HypothesisHistory",
     "MarketHypothesis",
     "HypothesisSnapshot",
     "HypothesisSnapshotBuilder",

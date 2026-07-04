@@ -68,6 +68,38 @@ class HypothesisSnapshotBuilder:
         return f"{present_types[0]}_only"
 
 
+class HypothesisHistory:
+    """Bounded in-memory history for diagnostic HypothesisSnapshot objects."""
+
+    def __init__(self, max_length: int = 10) -> None:
+        if max_length < 1:
+            raise ValueError("HypothesisHistory max_length must be at least 1.")
+        self.max_length = max_length
+        self._snapshots: list[HypothesisSnapshot] = []
+
+    def append(self, snapshot: HypothesisSnapshot) -> None:
+        self._snapshots.append(snapshot)
+        if len(self._snapshots) > self.max_length:
+            overflow = len(self._snapshots) - self.max_length
+            del self._snapshots[:overflow]
+
+    def latest(self) -> HypothesisSnapshot | None:
+        if not self._snapshots:
+            return None
+        return self._snapshots[-1]
+
+    def previous(self) -> HypothesisSnapshot | None:
+        if len(self._snapshots) < 2:
+            return None
+        return self._snapshots[-2]
+
+    def size(self) -> int:
+        return len(self._snapshots)
+
+    def clear(self) -> None:
+        self._snapshots.clear()
+
+
 def build_hypothesis_snapshot(
     *,
     agent_state: object,

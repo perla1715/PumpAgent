@@ -25,6 +25,7 @@ from pumpagent.runtime.domain.enums import (
 from pumpagent.runtime.modules.evidence import EvidenceSummary
 from pumpagent.runtime.modules.hypothesis import (
     HypothesisError,
+    HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
     add_hypothesis_package,
@@ -85,6 +86,21 @@ def make_evidence_summary(
         has_structural_evidence=structural,
         has_market_evidence=market,
         has_temporal_evidence=temporal,
+    )
+
+
+def make_hypothesis_snapshot(
+    *,
+    created_at: datetime = NOW,
+    state: AgentStateType = AgentStateType.UNKNOWN,
+    confidence: int = 0,
+) -> HypothesisSnapshot:
+    return build_hypothesis_snapshot(
+        agent_state=make_agent_state(state),
+        confidence=confidence,
+        confidence_trend="UNKNOWN",
+        evidence_summary=make_evidence_summary(structural=True),
+        created_at=created_at,
     )
 
 
@@ -303,6 +319,77 @@ class HypothesisEngineTests(unittest.TestCase):
 
         self.assertIsNone(snapshot.evidence_summary)
         self.assertEqual(snapshot.label, "unknown")
+
+    def test_empty_hypothesis_history(self) -> None:
+        history = HypothesisHistory()
+
+        self.assertIsNone(history.latest())
+        self.assertIsNone(history.previous())
+        self.assertEqual(history.size(), 0)
+
+    def test_hypothesis_history_append(self) -> None:
+        history = HypothesisHistory()
+        snapshot = make_hypothesis_snapshot()
+
+        history.append(snapshot)
+
+        self.assertEqual(history.size(), 1)
+
+    def test_hypothesis_history_latest(self) -> None:
+        history = HypothesisHistory()
+        first = make_hypothesis_snapshot(confidence=10)
+        second = make_hypothesis_snapshot(confidence=20)
+
+        history.append(first)
+        history.append(second)
+
+        self.assertEqual(history.latest(), second)
+
+    def test_hypothesis_history_previous(self) -> None:
+        history = HypothesisHistory()
+        first = make_hypothesis_snapshot(confidence=10)
+        second = make_hypothesis_snapshot(confidence=20)
+
+        history.append(first)
+        history.append(second)
+
+        self.assertEqual(history.previous(), first)
+
+    def test_hypothesis_history_limit_discards_oldest_snapshots(self) -> None:
+        history = HypothesisHistory(max_length=2)
+        first = make_hypothesis_snapshot(confidence=10)
+        second = make_hypothesis_snapshot(confidence=20)
+        third = make_hypothesis_snapshot(confidence=30)
+
+        history.append(first)
+        history.append(second)
+        history.append(third)
+
+        self.assertEqual(history.size(), 2)
+        self.assertEqual(history.previous(), second)
+        self.assertEqual(history.latest(), third)
+
+    def test_hypothesis_history_ordering_is_deterministic(self) -> None:
+        history = HypothesisHistory(max_length=3)
+        first = make_hypothesis_snapshot(confidence=10)
+        second = make_hypothesis_snapshot(confidence=20)
+        third = make_hypothesis_snapshot(confidence=30)
+
+        for snapshot in (first, second, third):
+            history.append(snapshot)
+
+        self.assertEqual(history.previous(), second)
+        self.assertEqual(history.latest(), third)
+
+    def test_hypothesis_history_clear(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot())
+
+        history.clear()
+
+        self.assertEqual(history.size(), 0)
+        self.assertIsNone(history.latest())
+        self.assertIsNone(history.previous())
 
     def test_supporting_and_contradicting_evidence_split(self) -> None:
         hypothesis = build_hypothesis(

@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 
 from pumpagent.runtime.domain import MarketSnapshot
 from pumpagent.runtime.domain.enums import AgentStateType, DataQualityStatus
+from pumpagent.runtime.modules.hypothesis import HypothesisHistory
 from pumpagent.runtime.modules.temporal_confidence import (
     CONFIDENCE_TREND_IMPROVING,
     CONFIDENCE_TREND_UNKNOWN,
@@ -114,6 +115,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.hypothesis_snapshot.confidence_trend, "UNKNOWN")
         self.assertEqual(result.hypothesis_snapshot.label, "mixed_evidence")
         self.assertEqual(result.hypothesis_snapshot.created_at, result.timestamp)
+        self.assertEqual(result.hypothesis_history_size, 1)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -138,6 +140,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.hypothesis_snapshot.state, "UNKNOWN")
         self.assertEqual(result.hypothesis_snapshot.confidence, 0)
         self.assertEqual(result.hypothesis_snapshot.label, "mixed_evidence")
+        self.assertEqual(result.hypothesis_history_size, 1)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -180,6 +183,10 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertIsNone(
             AgentCycleResult.__dataclass_fields__["hypothesis_snapshot"].default
         )
+        self.assertEqual(
+            AgentCycleResult.__dataclass_fields__["hypothesis_history_size"].default,
+            0,
+        )
 
     def test_runtime_updates_dynamic_watchlist(self) -> None:
         orchestrator = RuntimeOrchestrator()
@@ -205,6 +212,21 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.observation_count, 2)
         self.assertEqual(entry.event_id, second.event_id)
+        self.assertEqual(second.hypothesis_history_size, 2)
+
+    def test_runtime_hypothesis_history_respects_limit(self) -> None:
+        orchestrator = RuntimeOrchestrator(hypothesis_history=HypothesisHistory(max_length=1))
+        first = orchestrator.process_market_update(make_snapshot())
+        second = orchestrator.process_market_update(
+            make_snapshot(),
+            previous_state=first.new_state,
+            previous_hypothesis=first.hypothesis,
+        )
+
+        self.assertEqual(first.hypothesis_history_size, 1)
+        self.assertEqual(second.hypothesis_history_size, 1)
+        self.assertEqual(orchestrator.hypothesis_history.latest(), second.hypothesis_snapshot)
+        self.assertIsNone(orchestrator.hypothesis_history.previous())
 
     def test_runtime_temporal_confidence_improves(self) -> None:
         orchestrator = RuntimeOrchestrator()

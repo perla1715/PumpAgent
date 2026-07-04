@@ -27,6 +27,7 @@ from pumpagent.runtime.modules.evidence import (
 )
 from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
 from pumpagent.runtime.modules.hypothesis import (
+    HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
     build_hypothesis,
@@ -65,6 +66,7 @@ class AgentCycleResult:
     log_messages: tuple[str, ...] = ()
     evidence_summary: EvidenceSummary | None = None
     hypothesis_snapshot: HypothesisSnapshot | None = None
+    hypothesis_history_size: int = 0
 
 
 class RuntimeOrchestrator:
@@ -74,9 +76,11 @@ class RuntimeOrchestrator:
         self,
         watchlist: WatchlistManager | None = None,
         temporal_confidence: TemporalConfidenceManager | None = None,
+        hypothesis_history: HypothesisHistory | None = None,
     ) -> None:
         self.watchlist = watchlist or WatchlistManager()
         self.temporal_confidence = temporal_confidence or TemporalConfidenceManager()
+        self.hypothesis_history = hypothesis_history or HypothesisHistory()
 
     def process_market_update(
         self,
@@ -150,6 +154,8 @@ class RuntimeOrchestrator:
             evidence_summary=evidence_summary,
             created_at=snapshot.timestamp,
         )
+        self.hypothesis_history.append(hypothesis_snapshot)
+        hypothesis_history_size = self.hypothesis_history.size()
 
         return AgentCycleResult(
             event_id=event_id,
@@ -175,6 +181,7 @@ class RuntimeOrchestrator:
                 new_state=new_state_name,
                 hypothesis=hypothesis,
             ),
+            hypothesis_history_size=hypothesis_history_size,
         )
 
 

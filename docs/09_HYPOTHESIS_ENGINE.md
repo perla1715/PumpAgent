@@ -73,6 +73,25 @@ The snapshot does not modify `AgentState`, `Confidence`, or existing
 hypotheses. It does not make decisions, assign probabilities, or imply trading
 action.
 
+## Hypothesis History v1
+
+`HypothesisHistory` is a bounded in-memory container for recent
+`HypothesisSnapshot` objects.
+
+It supports:
+
+- `append(snapshot)`
+- `latest()`
+- `previous()`
+- `size()`
+- `clear()`
+
+Older snapshots are discarded automatically when the configured maximum history
+length is exceeded.
+
+History is diagnostic only. It does not modify `AgentState`, `Confidence`,
+hypothesis logic, alerts, probabilities, or trading decisions.
+
 ---
 
 ## MVP Labels
