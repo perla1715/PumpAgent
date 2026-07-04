@@ -169,11 +169,30 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 - temporal confidence;
 - confidence trend;
 - confidence delta;
+- diagnostic report;
 - log messages.
 
 This result is a deterministic in-memory object. Runtime logging is represented
 as returned messages only; the loop does not write logs, use a database, call
 Telegram, or execute trades.
+
+### Diagnostic Runtime Report v1
+
+`DiagnosticRuntimeReport` packages the current cycle's diagnostic-only outputs
+into one immutable object:
+
+- state;
+- confidence;
+- confidence trend;
+- temporal confidence;
+- evidence summary;
+- hypothesis snapshot;
+- hypothesis history size;
+- history trend summary;
+- created timestamp.
+
+The report is output-only. It does not modify `AgentState`, `Confidence`,
+Hypothesis logic, alerts, probabilities, or trading decisions.
 
 ### Runtime Logging MVP
 

@@ -45,6 +45,10 @@ from pumpagent.runtime.modules.temporal_confidence import (
     TemporalConfidenceState,
 )
 from pumpagent.runtime.modules.watchlist import WatchlistManager
+from pumpagent.runtime.orchestrator.diagnostic_report import (
+    DiagnosticRuntimeReport,
+    build_diagnostic_runtime_report,
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,7 @@ class AgentCycleResult:
     hypothesis_snapshot: HypothesisSnapshot | None = None
     hypothesis_history_size: int = 0
     history_trend_summary: HistoryTrendSummary | None = None
+    diagnostic_report: DiagnosticRuntimeReport | None = None
 
 
 class RuntimeOrchestrator:
@@ -160,6 +165,17 @@ class RuntimeOrchestrator:
         self.hypothesis_history.append(hypothesis_snapshot)
         hypothesis_history_size = self.hypothesis_history.size()
         history_trend_summary = HistoryTrendAnalyzer.analyze(self.hypothesis_history)
+        diagnostic_report = build_diagnostic_runtime_report(
+            state=agent_state,
+            confidence=confidence,
+            confidence_trend=confidence_trend,
+            temporal_confidence=temporal_confidence,
+            evidence_summary=evidence_summary,
+            hypothesis_snapshot=hypothesis_snapshot,
+            hypothesis_history_size=hypothesis_history_size,
+            history_trend_summary=history_trend_summary,
+            created_at=snapshot.timestamp,
+        )
 
         return AgentCycleResult(
             event_id=event_id,
@@ -187,6 +203,7 @@ class RuntimeOrchestrator:
             ),
             hypothesis_history_size=hypothesis_history_size,
             history_trend_summary=history_trend_summary,
+            diagnostic_report=diagnostic_report,
         )
 
 

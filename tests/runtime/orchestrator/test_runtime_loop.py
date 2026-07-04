@@ -21,7 +21,9 @@ from pumpagent.runtime.modules.temporal_confidence import (
 )
 from pumpagent.runtime.orchestrator import (
     AgentCycleResult,
+    DiagnosticRuntimeReport,
     RuntimeOrchestrator,
+    build_diagnostic_runtime_report,
     run_agent_cycle,
 )
 
@@ -81,6 +83,29 @@ def make_snapshot(
 
 
 class RuntimeLoopTests(unittest.TestCase):
+    def test_empty_diagnostic_runtime_report(self) -> None:
+        report = build_diagnostic_runtime_report(
+            state="UNKNOWN",
+            confidence=0,
+            confidence_trend="UNKNOWN",
+            temporal_confidence=None,
+            evidence_summary=None,
+            hypothesis_snapshot=None,
+            hypothesis_history_size=0,
+            history_trend_summary=None,
+            created_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertIsInstance(report, DiagnosticRuntimeReport)
+        self.assertEqual(report.state, "UNKNOWN")
+        self.assertEqual(report.confidence, 0)
+        self.assertEqual(report.confidence_trend, "UNKNOWN")
+        self.assertIsNone(report.temporal_confidence)
+        self.assertIsNone(report.evidence_summary)
+        self.assertIsNone(report.hypothesis_snapshot)
+        self.assertEqual(report.hypothesis_history_size, 0)
+        self.assertIsNone(report.history_trend_summary)
+
     def test_normal_processing(self) -> None:
         result = run_agent_cycle(make_snapshot(), previous_state="UNKNOWN")
 
@@ -121,6 +146,19 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.history_trend_summary.evidence_score_trend, "UNKNOWN")
         self.assertEqual(result.history_trend_summary.label_stability, "UNKNOWN")
         self.assertEqual(result.history_trend_summary.sample_size, 1)
+        self.assertIsNotNone(result.diagnostic_report)
+        self.assertEqual(result.diagnostic_report.state, "IGNITION")
+        self.assertEqual(result.diagnostic_report.confidence, 50)
+        self.assertEqual(result.diagnostic_report.confidence_trend, "UNKNOWN")
+        self.assertIs(result.diagnostic_report.temporal_confidence, result.temporal_confidence)
+        self.assertIs(result.diagnostic_report.evidence_summary, result.evidence_summary)
+        self.assertIs(result.diagnostic_report.hypothesis_snapshot, result.hypothesis_snapshot)
+        self.assertEqual(result.diagnostic_report.hypothesis_history_size, 1)
+        self.assertIs(
+            result.diagnostic_report.history_trend_summary,
+            result.history_trend_summary,
+        )
+        self.assertEqual(result.diagnostic_report.created_at, result.timestamp)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -195,6 +233,37 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertIsNone(
             AgentCycleResult.__dataclass_fields__["history_trend_summary"].default
         )
+        self.assertIsNone(
+            AgentCycleResult.__dataclass_fields__["diagnostic_report"].default
+        )
+
+    def test_diagnostic_runtime_report_is_deterministic(self) -> None:
+        result = run_agent_cycle(make_snapshot())
+
+        first = build_diagnostic_runtime_report(
+            state=result.agent_state,
+            confidence=result.confidence,
+            confidence_trend=result.confidence_trend,
+            temporal_confidence=result.temporal_confidence,
+            evidence_summary=result.evidence_summary,
+            hypothesis_snapshot=result.hypothesis_snapshot,
+            hypothesis_history_size=result.hypothesis_history_size,
+            history_trend_summary=result.history_trend_summary,
+            created_at=result.timestamp,
+        )
+        second = build_diagnostic_runtime_report(
+            state=result.agent_state,
+            confidence=result.confidence,
+            confidence_trend=result.confidence_trend,
+            temporal_confidence=result.temporal_confidence,
+            evidence_summary=result.evidence_summary,
+            hypothesis_snapshot=result.hypothesis_snapshot,
+            hypothesis_history_size=result.hypothesis_history_size,
+            history_trend_summary=result.history_trend_summary,
+            created_at=result.timestamp,
+        )
+
+        self.assertEqual(first, second)
 
     def test_runtime_updates_dynamic_watchlist(self) -> None:
         orchestrator = RuntimeOrchestrator()
