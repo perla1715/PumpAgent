@@ -18,7 +18,13 @@ from pumpagent.runtime.domain import (
     StructuralEvidence,
 )
 from pumpagent.runtime.domain.enums import AgentStateType
-from pumpagent.runtime.modules.evidence import Evidence, collect_evidence
+from pumpagent.runtime.modules.evidence import (
+    Evidence,
+    EvidenceSummary,
+    aggregate_evidence_score,
+    build_evidence_summary,
+    collect_evidence,
+)
 from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
 from pumpagent.runtime.modules.hypothesis import MarketHypothesis, build_hypothesis
 from pumpagent.runtime.modules.market_efficiency import build_market_efficiency_evidence
@@ -52,6 +58,7 @@ class AgentCycleResult:
     confidence_trend: str
     confidence_delta: int | None
     log_messages: tuple[str, ...] = ()
+    evidence_summary: EvidenceSummary | None = None
 
 
 class RuntimeOrchestrator:
@@ -109,6 +116,17 @@ class RuntimeOrchestrator:
                 timeframe=snapshot.timeframe,
             ),
         )
+        aggregated_evidence_score = aggregate_evidence_score(
+            structural_evidence=structure_result,
+            market_evidence=market_result,
+            temporal_evidence=temporal_confidence,
+        )
+        evidence_summary = build_evidence_summary(
+            aggregated_score=aggregated_evidence_score,
+            structural_evidence=structure_result,
+            market_evidence=market_result,
+            temporal_evidence=temporal_confidence,
+        )
 
         return AgentCycleResult(
             event_id=event_id,
@@ -125,6 +143,7 @@ class RuntimeOrchestrator:
             watchlist_action=watchlist_action,
             watchlist_observation_count=watchlist_observation_count,
             temporal_confidence=temporal_confidence,
+            evidence_summary=evidence_summary,
             confidence_trend=(
                 temporal_confidence.trend
                 if temporal_confidence is not None

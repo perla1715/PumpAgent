@@ -40,6 +40,20 @@ class AggregatedEvidenceScore:
     diagnostic_only: bool = True
 
 
+@dataclass(frozen=True)
+class EvidenceSummary:
+    structural_score: float | None
+    market_score: float | None
+    temporal_score: float | None
+    total_score: float
+    evidence_count: int
+    strongest_evidence_type: str | None
+    weakest_evidence_type: str | None
+    has_structural_evidence: bool
+    has_market_evidence: bool
+    has_temporal_evidence: bool
+
+
 class EvidenceScore:
     """Deterministic helper for diagnostic evidence-strength scores only."""
 
@@ -170,6 +184,67 @@ class EvidenceScore:
         return cls.TEMPORAL_TREND_SCORES.get(_enum_value(trend))
 
 
+class EvidenceSummaryBridge:
+    """Build future Hypothesis-ready evidence summaries without decisions."""
+
+    EVIDENCE_TYPE_ORDER = ("structural", "market", "temporal")
+
+    @classmethod
+    def build_summary(
+        cls,
+        *,
+        aggregated_score: AggregatedEvidenceScore,
+        structural_evidence: object | None = None,
+        market_evidence: object | None = None,
+        temporal_evidence: object | None = None,
+    ) -> EvidenceSummary:
+        scores_by_type = {
+            "structural": aggregated_score.structural_score,
+            "market": aggregated_score.market_score,
+            "temporal": aggregated_score.temporal_score,
+        }
+
+        return EvidenceSummary(
+            structural_score=aggregated_score.structural_score,
+            market_score=aggregated_score.market_score,
+            temporal_score=aggregated_score.temporal_score,
+            total_score=aggregated_score.total_score,
+            evidence_count=aggregated_score.evidence_count,
+            strongest_evidence_type=cls._select_evidence_type(scores_by_type, strongest=True),
+            weakest_evidence_type=cls._select_evidence_type(scores_by_type, strongest=False),
+            has_structural_evidence=_has_evidence(
+                structural_evidence,
+                aggregated_score.structural_score,
+            ),
+            has_market_evidence=_has_evidence(
+                market_evidence,
+                aggregated_score.market_score,
+            ),
+            has_temporal_evidence=_has_evidence(
+                temporal_evidence,
+                aggregated_score.temporal_score,
+            ),
+        )
+
+    @classmethod
+    def _select_evidence_type(
+        cls,
+        scores_by_type: dict[str, float | None],
+        *,
+        strongest: bool,
+    ) -> str | None:
+        scored_types = tuple(
+            evidence_type
+            for evidence_type in cls.EVIDENCE_TYPE_ORDER
+            if scores_by_type[evidence_type] is not None
+        )
+        if not scored_types:
+            return None
+
+        selector = max if strongest else min
+        return selector(scored_types, key=lambda evidence_type: scores_by_type[evidence_type])
+
+
 def collect_evidence(data: Any) -> list[Evidence]:
     """Collect lightweight evidence from current market metrics only."""
 
@@ -227,6 +302,23 @@ def aggregate_evidence_score(
     )
 
 
+def build_evidence_summary(
+    *,
+    aggregated_score: AggregatedEvidenceScore,
+    structural_evidence: object | None = None,
+    market_evidence: object | None = None,
+    temporal_evidence: object | None = None,
+) -> EvidenceSummary:
+    """Build a deterministic summary bridge for future Hypothesis consumption."""
+
+    return EvidenceSummaryBridge.build_summary(
+        aggregated_score=aggregated_score,
+        structural_evidence=structural_evidence,
+        market_evidence=market_evidence,
+        temporal_evidence=temporal_evidence,
+    )
+
+
 def _signed_score(evidence: Evidence) -> float:
     return 1.0 if evidence.positive else 0.0
 
@@ -241,6 +333,10 @@ def _enum_value(value: object) -> str:
     if isinstance(value, Enum):
         return str(value.value)
     return str(value)
+
+
+def _has_evidence(evidence: object | None, score: float | None) -> bool:
+    return evidence is not None or score is not None
 
 
 def _validate_optional_ratio(value: float | None, field_name: str) -> None:

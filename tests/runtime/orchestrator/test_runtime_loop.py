@@ -103,6 +103,11 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.watchlist_action, "REGISTERED")
         self.assertEqual(result.watchlist_observation_count, 1)
         self.assertIsNotNone(result.temporal_confidence)
+        self.assertTrue(result.evidence_summary.has_structural_evidence)
+        self.assertTrue(result.evidence_summary.has_market_evidence)
+        self.assertTrue(result.evidence_summary.has_temporal_evidence)
+        self.assertEqual(result.evidence_summary.evidence_count, 3)
+        self.assertEqual(result.evidence_summary.strongest_evidence_type, "structural")
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -119,6 +124,10 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.watchlist_action, "NONE")
         self.assertEqual(result.watchlist_observation_count, 0)
         self.assertIsNone(result.temporal_confidence)
+        self.assertTrue(result.evidence_summary.has_structural_evidence)
+        self.assertTrue(result.evidence_summary.has_market_evidence)
+        self.assertFalse(result.evidence_summary.has_temporal_evidence)
+        self.assertEqual(result.evidence_summary.evidence_count, 2)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 

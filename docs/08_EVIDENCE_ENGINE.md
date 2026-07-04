@@ -71,6 +71,18 @@ Evidence scoring is diagnostic only.
 The score summarizes available structural, market, and temporal evidence. It
 does not modify `AgentState`, `Confidence`, `Hypothesis`, or runtime decisions.
 
+## Evidence Summary Bridge v1
+
+`EvidenceSummaryBridge` converts raw evidence sections and an
+`AggregatedEvidenceScore` into an `EvidenceSummary` for future Hypothesis Engine
+consumption.
+
+The summary includes score fields, evidence presence flags, evidence count, and
+deterministic strongest/weakest evidence type labels.
+
+It remains a bridge only. It does not create or update hypotheses, modify
+confidence, modify agent state, assign probabilities, or make trading decisions.
+
 ---
 
 ## Boundaries
