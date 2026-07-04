@@ -24,9 +24,15 @@ from pumpagent.runtime.domain.enums import (
 )
 from pumpagent.runtime.modules.evidence import EvidenceSummary
 from pumpagent.runtime.modules.hypothesis import (
+    EVALUATION_NEUTRAL,
+    EVALUATION_REINFORCED,
+    EVALUATION_UNKNOWN,
+    EVALUATION_WEAKENING,
     HistoryTrendAnalyzer,
     HistoryTrendSummary,
     HypothesisError,
+    HypothesisEvaluation,
+    HypothesisEvaluator,
     HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
@@ -479,6 +485,89 @@ class HypothesisEngineTests(unittest.TestCase):
 
         first = HistoryTrendAnalyzer.analyze(history)
         second = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(first, second)
+
+    def test_empty_hypothesis_evaluation(self) -> None:
+        evaluation = HypothesisEvaluator.evaluate(
+            snapshot=None,
+            history_trend_summary=None,
+        )
+
+        self.assertIsInstance(evaluation, HypothesisEvaluation)
+        self.assertEqual(evaluation.status, EVALUATION_UNKNOWN)
+        self.assertEqual(evaluation.reason, "missing_snapshot_or_history_trend")
+        self.assertIsNone(evaluation.created_at)
+
+    def test_improving_hypothesis_evaluation(self) -> None:
+        snapshot = make_hypothesis_snapshot(created_at=NOW)
+        trend = HistoryTrendSummary(
+            confidence_trend=TREND_IMPROVING,
+            evidence_score_trend=TREND_IMPROVING,
+            label_stability=TREND_STABLE,
+            sample_size=2,
+        )
+
+        evaluation = HypothesisEvaluator.evaluate(
+            snapshot=snapshot,
+            history_trend_summary=trend,
+        )
+
+        self.assertEqual(evaluation.status, EVALUATION_REINFORCED)
+        self.assertEqual(evaluation.reason, "confidence_and_evidence_trends_improving")
+        self.assertEqual(evaluation.created_at, NOW)
+
+    def test_stable_hypothesis_evaluation(self) -> None:
+        snapshot = make_hypothesis_snapshot()
+        trend = HistoryTrendSummary(
+            confidence_trend=TREND_STABLE,
+            evidence_score_trend=TREND_STABLE,
+            label_stability=TREND_STABLE,
+            sample_size=2,
+        )
+
+        evaluation = HypothesisEvaluator.evaluate(
+            snapshot=snapshot,
+            history_trend_summary=trend,
+        )
+
+        self.assertEqual(evaluation.status, EVALUATION_NEUTRAL)
+        self.assertEqual(evaluation.reason, "confidence_and_evidence_trends_stable")
+
+    def test_weakening_hypothesis_evaluation(self) -> None:
+        snapshot = make_hypothesis_snapshot()
+        trend = HistoryTrendSummary(
+            confidence_trend=TREND_STABLE,
+            evidence_score_trend=TREND_WEAKENING,
+            label_stability=TREND_STABLE,
+            sample_size=2,
+        )
+
+        evaluation = HypothesisEvaluator.evaluate(
+            snapshot=snapshot,
+            history_trend_summary=trend,
+        )
+
+        self.assertEqual(evaluation.status, EVALUATION_WEAKENING)
+        self.assertEqual(evaluation.reason, "confidence_or_evidence_trend_weakening")
+
+    def test_hypothesis_evaluation_output_is_deterministic(self) -> None:
+        snapshot = make_hypothesis_snapshot()
+        trend = HistoryTrendSummary(
+            confidence_trend=TREND_IMPROVING,
+            evidence_score_trend=TREND_IMPROVING,
+            label_stability=TREND_STABLE,
+            sample_size=2,
+        )
+
+        first = HypothesisEvaluator.evaluate(
+            snapshot=snapshot,
+            history_trend_summary=trend,
+        )
+        second = HypothesisEvaluator.evaluate(
+            snapshot=snapshot,
+            history_trend_summary=trend,
+        )
 
         self.assertEqual(first, second)
 

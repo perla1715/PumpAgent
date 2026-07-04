@@ -29,6 +29,8 @@ from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_
 from pumpagent.runtime.modules.hypothesis import (
     HistoryTrendAnalyzer,
     HistoryTrendSummary,
+    HypothesisEvaluation,
+    HypothesisEvaluator,
     HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
@@ -75,6 +77,7 @@ class AgentCycleResult:
     hypothesis_history_size: int = 0
     history_trend_summary: HistoryTrendSummary | None = None
     diagnostic_report: DiagnosticRuntimeReport | None = None
+    hypothesis_evaluation: HypothesisEvaluation | None = None
 
 
 class RuntimeOrchestrator:
@@ -165,6 +168,10 @@ class RuntimeOrchestrator:
         self.hypothesis_history.append(hypothesis_snapshot)
         hypothesis_history_size = self.hypothesis_history.size()
         history_trend_summary = HistoryTrendAnalyzer.analyze(self.hypothesis_history)
+        hypothesis_evaluation = HypothesisEvaluator.evaluate(
+            snapshot=hypothesis_snapshot,
+            history_trend_summary=history_trend_summary,
+        )
         diagnostic_report = build_diagnostic_runtime_report(
             state=agent_state,
             confidence=confidence,
@@ -204,6 +211,7 @@ class RuntimeOrchestrator:
             hypothesis_history_size=hypothesis_history_size,
             history_trend_summary=history_trend_summary,
             diagnostic_report=diagnostic_report,
+            hypothesis_evaluation=hypothesis_evaluation,
         )
 
 

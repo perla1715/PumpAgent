@@ -159,6 +159,13 @@ class RuntimeLoopTests(unittest.TestCase):
             result.history_trend_summary,
         )
         self.assertEqual(result.diagnostic_report.created_at, result.timestamp)
+        self.assertIsNotNone(result.hypothesis_evaluation)
+        self.assertEqual(result.hypothesis_evaluation.status, "UNKNOWN")
+        self.assertEqual(
+            result.hypothesis_evaluation.reason,
+            "confidence_or_evidence_trend_unknown",
+        )
+        self.assertEqual(result.hypothesis_evaluation.created_at, result.timestamp)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -236,6 +243,9 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertIsNone(
             AgentCycleResult.__dataclass_fields__["diagnostic_report"].default
         )
+        self.assertIsNone(
+            AgentCycleResult.__dataclass_fields__["hypothesis_evaluation"].default
+        )
 
     def test_diagnostic_runtime_report_is_deterministic(self) -> None:
         result = run_agent_cycle(make_snapshot())
@@ -295,6 +305,8 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(second.history_trend_summary.evidence_score_trend, "IMPROVING")
         self.assertEqual(second.history_trend_summary.label_stability, "STABLE")
         self.assertEqual(second.history_trend_summary.sample_size, 2)
+        self.assertIsNotNone(second.hypothesis_evaluation)
+        self.assertEqual(second.hypothesis_evaluation.status, "UNKNOWN")
 
     def test_runtime_hypothesis_history_respects_limit(self) -> None:
         orchestrator = RuntimeOrchestrator(hypothesis_history=HypothesisHistory(max_length=1))

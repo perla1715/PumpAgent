@@ -1,5 +1,13 @@
 """Hypothesis Engine v0.1."""
 
+from pumpagent.runtime.modules.hypothesis.evaluator import (
+    EVALUATION_NEUTRAL,
+    EVALUATION_REINFORCED,
+    EVALUATION_UNKNOWN,
+    EVALUATION_WEAKENING,
+    HypothesisEvaluation,
+    HypothesisEvaluator,
+)
 from pumpagent.runtime.modules.hypothesis.engine import (
     HypothesisError,
     MarketHypothesis,
@@ -21,7 +29,13 @@ from pumpagent.runtime.modules.hypothesis.snapshot import (
 )
 
 __all__ = [
+    "EVALUATION_NEUTRAL",
+    "EVALUATION_REINFORCED",
+    "EVALUATION_UNKNOWN",
+    "EVALUATION_WEAKENING",
     "HypothesisError",
+    "HypothesisEvaluation",
+    "HypothesisEvaluator",
     "HistoryTrendAnalyzer",
     "HistoryTrendSummary",
     "HypothesisHistory",

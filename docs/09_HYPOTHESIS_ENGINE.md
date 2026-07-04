@@ -112,6 +112,29 @@ Supported trend values are:
 Empty or single-snapshot history returns `UNKNOWN`. The analyzer is deterministic
 and diagnostic only; it does not modify runtime behavior or generate decisions.
 
+## Hypothesis Evaluator v1
+
+`HypothesisEvaluator` reads the current `HypothesisSnapshot` and
+`HistoryTrendSummary`, then returns a diagnostic `HypothesisEvaluation`.
+
+Evaluation statuses are:
+
+- `REINFORCED`
+- `NEUTRAL`
+- `WEAKENING`
+- `UNKNOWN`
+
+The evaluator uses deterministic trend rules only:
+
+- improving confidence and improving evidence score -> `REINFORCED`;
+- stable confidence and stable evidence score -> `NEUTRAL`;
+- weakening confidence or weakening evidence score -> `WEAKENING`;
+- missing, unknown, or mixed trend context -> `UNKNOWN`.
+
+This evaluation is diagnostic only. It does not modify confidence, hypotheses,
+state transitions, runtime decisions, alerts, probabilities, or trading
+behavior.
+
 ---
 
 ## MVP Labels
