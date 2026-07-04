@@ -116,6 +116,11 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result.hypothesis_snapshot.label, "mixed_evidence")
         self.assertEqual(result.hypothesis_snapshot.created_at, result.timestamp)
         self.assertEqual(result.hypothesis_history_size, 1)
+        self.assertIsNotNone(result.history_trend_summary)
+        self.assertEqual(result.history_trend_summary.confidence_trend, "UNKNOWN")
+        self.assertEqual(result.history_trend_summary.evidence_score_trend, "UNKNOWN")
+        self.assertEqual(result.history_trend_summary.label_stability, "UNKNOWN")
+        self.assertEqual(result.history_trend_summary.sample_size, 1)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -187,6 +192,9 @@ class RuntimeLoopTests(unittest.TestCase):
             AgentCycleResult.__dataclass_fields__["hypothesis_history_size"].default,
             0,
         )
+        self.assertIsNone(
+            AgentCycleResult.__dataclass_fields__["history_trend_summary"].default
+        )
 
     def test_runtime_updates_dynamic_watchlist(self) -> None:
         orchestrator = RuntimeOrchestrator()
@@ -213,6 +221,11 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(entry.observation_count, 2)
         self.assertEqual(entry.event_id, second.event_id)
         self.assertEqual(second.hypothesis_history_size, 2)
+        self.assertIsNotNone(second.history_trend_summary)
+        self.assertEqual(second.history_trend_summary.confidence_trend, "STABLE")
+        self.assertEqual(second.history_trend_summary.evidence_score_trend, "IMPROVING")
+        self.assertEqual(second.history_trend_summary.label_stability, "STABLE")
+        self.assertEqual(second.history_trend_summary.sample_size, 2)
 
     def test_runtime_hypothesis_history_respects_limit(self) -> None:
         orchestrator = RuntimeOrchestrator(hypothesis_history=HypothesisHistory(max_length=1))

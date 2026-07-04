@@ -27,6 +27,8 @@ from pumpagent.runtime.modules.evidence import (
 )
 from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
 from pumpagent.runtime.modules.hypothesis import (
+    HistoryTrendAnalyzer,
+    HistoryTrendSummary,
     HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
@@ -67,6 +69,7 @@ class AgentCycleResult:
     evidence_summary: EvidenceSummary | None = None
     hypothesis_snapshot: HypothesisSnapshot | None = None
     hypothesis_history_size: int = 0
+    history_trend_summary: HistoryTrendSummary | None = None
 
 
 class RuntimeOrchestrator:
@@ -156,6 +159,7 @@ class RuntimeOrchestrator:
         )
         self.hypothesis_history.append(hypothesis_snapshot)
         hypothesis_history_size = self.hypothesis_history.size()
+        history_trend_summary = HistoryTrendAnalyzer.analyze(self.hypothesis_history)
 
         return AgentCycleResult(
             event_id=event_id,
@@ -182,6 +186,7 @@ class RuntimeOrchestrator:
                 hypothesis=hypothesis,
             ),
             hypothesis_history_size=hypothesis_history_size,
+            history_trend_summary=history_trend_summary,
         )
 
 

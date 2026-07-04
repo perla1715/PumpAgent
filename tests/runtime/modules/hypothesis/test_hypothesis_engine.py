@@ -24,10 +24,16 @@ from pumpagent.runtime.domain.enums import (
 )
 from pumpagent.runtime.modules.evidence import EvidenceSummary
 from pumpagent.runtime.modules.hypothesis import (
+    HistoryTrendAnalyzer,
+    HistoryTrendSummary,
     HypothesisError,
     HypothesisHistory,
     HypothesisSnapshot,
     MarketHypothesis,
+    TREND_IMPROVING,
+    TREND_STABLE,
+    TREND_UNKNOWN,
+    TREND_WEAKENING,
     add_hypothesis_package,
     build_hypothesis,
     build_hypothesis_package,
@@ -94,12 +100,21 @@ def make_hypothesis_snapshot(
     created_at: datetime = NOW,
     state: AgentStateType = AgentStateType.UNKNOWN,
     confidence: int = 0,
+    evidence_score: float = 0.5,
+    structural: bool = True,
+    market: bool = False,
+    temporal: bool = False,
 ) -> HypothesisSnapshot:
     return build_hypothesis_snapshot(
         agent_state=make_agent_state(state),
         confidence=confidence,
         confidence_trend="UNKNOWN",
-        evidence_summary=make_evidence_summary(structural=True),
+        evidence_summary=make_evidence_summary(
+            structural=structural,
+            market=market,
+            temporal=temporal,
+            total_score=evidence_score,
+        ),
         created_at=created_at,
     )
 
@@ -390,6 +405,82 @@ class HypothesisEngineTests(unittest.TestCase):
         self.assertEqual(history.size(), 0)
         self.assertIsNone(history.latest())
         self.assertIsNone(history.previous())
+
+    def test_empty_history_trend_summary(self) -> None:
+        summary = HistoryTrendAnalyzer.analyze(HypothesisHistory())
+
+        self.assertIsInstance(summary, HistoryTrendSummary)
+        self.assertEqual(summary.confidence_trend, TREND_UNKNOWN)
+        self.assertEqual(summary.evidence_score_trend, TREND_UNKNOWN)
+        self.assertEqual(summary.label_stability, TREND_UNKNOWN)
+        self.assertEqual(summary.sample_size, 0)
+
+    def test_single_snapshot_history_trend_summary(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(confidence=10))
+
+        summary = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(summary.confidence_trend, TREND_UNKNOWN)
+        self.assertEqual(summary.evidence_score_trend, TREND_UNKNOWN)
+        self.assertEqual(summary.label_stability, TREND_UNKNOWN)
+        self.assertEqual(summary.sample_size, 1)
+
+    def test_improving_history_trend_summary(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(confidence=10, evidence_score=0.2))
+        history.append(make_hypothesis_snapshot(confidence=30, evidence_score=0.8))
+
+        summary = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(summary.confidence_trend, TREND_IMPROVING)
+        self.assertEqual(summary.evidence_score_trend, TREND_IMPROVING)
+        self.assertEqual(summary.label_stability, TREND_STABLE)
+        self.assertEqual(summary.sample_size, 2)
+
+    def test_weakening_history_trend_summary(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(confidence=30, evidence_score=0.8))
+        history.append(make_hypothesis_snapshot(confidence=10, evidence_score=0.2))
+
+        summary = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(summary.confidence_trend, TREND_WEAKENING)
+        self.assertEqual(summary.evidence_score_trend, TREND_WEAKENING)
+
+    def test_stable_history_trend_summary(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(confidence=20, evidence_score=0.5))
+        history.append(make_hypothesis_snapshot(confidence=20, evidence_score=0.505))
+
+        summary = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(summary.confidence_trend, TREND_STABLE)
+        self.assertEqual(summary.evidence_score_trend, TREND_STABLE)
+
+    def test_history_trend_label_stability(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(structural=True))
+        history.append(
+            make_hypothesis_snapshot(
+                structural=False,
+                market=True,
+            )
+        )
+
+        summary = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(summary.label_stability, TREND_WEAKENING)
+
+    def test_history_trend_output_is_deterministic(self) -> None:
+        history = HypothesisHistory()
+        history.append(make_hypothesis_snapshot(confidence=10, evidence_score=0.2))
+        history.append(make_hypothesis_snapshot(confidence=30, evidence_score=0.8))
+
+        first = HistoryTrendAnalyzer.analyze(history)
+        second = HistoryTrendAnalyzer.analyze(history)
+
+        self.assertEqual(first, second)
 
     def test_supporting_and_contradicting_evidence_split(self) -> None:
         hypothesis = build_hypothesis(

@@ -92,6 +92,26 @@ length is exceeded.
 History is diagnostic only. It does not modify `AgentState`, `Confidence`,
 hypothesis logic, alerts, probabilities, or trading decisions.
 
+## History Trend Analyzer v1
+
+`HistoryTrendAnalyzer` reads `HypothesisHistory` and returns a
+`HistoryTrendSummary` with:
+
+- `confidence_trend`
+- `evidence_score_trend`
+- `label_stability`
+- `sample_size`
+
+Supported trend values are:
+
+- `IMPROVING`
+- `STABLE`
+- `WEAKENING`
+- `UNKNOWN`
+
+Empty or single-snapshot history returns `UNKNOWN`. The analyzer is deterministic
+and diagnostic only; it does not modify runtime behavior or generate decisions.
+
 ---
 
 ## MVP Labels
