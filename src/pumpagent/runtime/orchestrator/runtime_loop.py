@@ -26,7 +26,12 @@ from pumpagent.runtime.modules.evidence import (
     collect_evidence,
 )
 from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
-from pumpagent.runtime.modules.hypothesis import MarketHypothesis, build_hypothesis
+from pumpagent.runtime.modules.hypothesis import (
+    HypothesisSnapshot,
+    MarketHypothesis,
+    build_hypothesis,
+    build_hypothesis_snapshot,
+)
 from pumpagent.runtime.modules.market_efficiency import build_market_efficiency_evidence
 from pumpagent.runtime.modules.market_metrics import calculate_confidence
 from pumpagent.runtime.modules.perception import build_observation_package
@@ -59,6 +64,7 @@ class AgentCycleResult:
     confidence_delta: int | None
     log_messages: tuple[str, ...] = ()
     evidence_summary: EvidenceSummary | None = None
+    hypothesis_snapshot: HypothesisSnapshot | None = None
 
 
 class RuntimeOrchestrator:
@@ -127,6 +133,23 @@ class RuntimeOrchestrator:
             market_evidence=market_result,
             temporal_evidence=temporal_confidence,
         )
+        confidence_trend = (
+            temporal_confidence.trend
+            if temporal_confidence is not None
+            else CONFIDENCE_TREND_UNKNOWN
+        )
+        confidence_delta = (
+            temporal_confidence.confidence_delta
+            if temporal_confidence is not None
+            else None
+        )
+        hypothesis_snapshot = build_hypothesis_snapshot(
+            agent_state=agent_state,
+            confidence=confidence,
+            confidence_trend=confidence_trend,
+            evidence_summary=evidence_summary,
+            created_at=snapshot.timestamp,
+        )
 
         return AgentCycleResult(
             event_id=event_id,
@@ -144,16 +167,9 @@ class RuntimeOrchestrator:
             watchlist_observation_count=watchlist_observation_count,
             temporal_confidence=temporal_confidence,
             evidence_summary=evidence_summary,
-            confidence_trend=(
-                temporal_confidence.trend
-                if temporal_confidence is not None
-                else CONFIDENCE_TREND_UNKNOWN
-            ),
-            confidence_delta=(
-                temporal_confidence.confidence_delta
-                if temporal_confidence is not None
-                else None
-            ),
+            hypothesis_snapshot=hypothesis_snapshot,
+            confidence_trend=confidence_trend,
+            confidence_delta=confidence_delta,
             log_messages=_cycle_log_messages(
                 previous_state=previous_state_name,
                 new_state=new_state_name,

@@ -46,6 +46,33 @@ replaced as new market data arrives.
 - `lifecycle_reason`
 - `previous_hypothesis_id`
 
+## Hypothesis Snapshot v1
+
+`HypothesisSnapshot` records the current interpretation context without changing
+runtime behavior.
+
+It contains:
+
+- `state`
+- `confidence`
+- `confidence_trend`
+- `evidence_summary`
+- `created_at`
+- `label`
+
+Snapshot labels are deterministic and descriptive only:
+
+- `unknown`
+- `low_evidence`
+- `structural_only`
+- `market_only`
+- `temporal_only`
+- `mixed_evidence`
+
+The snapshot does not modify `AgentState`, `Confidence`, or existing
+hypotheses. It does not make decisions, assign probabilities, or imply trading
+action.
+
 ---
 
 ## MVP Labels

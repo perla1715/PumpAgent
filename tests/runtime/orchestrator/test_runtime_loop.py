@@ -108,6 +108,12 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertTrue(result.evidence_summary.has_temporal_evidence)
         self.assertEqual(result.evidence_summary.evidence_count, 3)
         self.assertEqual(result.evidence_summary.strongest_evidence_type, "structural")
+        self.assertIsNotNone(result.hypothesis_snapshot)
+        self.assertEqual(result.hypothesis_snapshot.state, "IGNITION")
+        self.assertEqual(result.hypothesis_snapshot.confidence, 50)
+        self.assertEqual(result.hypothesis_snapshot.confidence_trend, "UNKNOWN")
+        self.assertEqual(result.hypothesis_snapshot.label, "mixed_evidence")
+        self.assertEqual(result.hypothesis_snapshot.created_at, result.timestamp)
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -128,6 +134,10 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertTrue(result.evidence_summary.has_market_evidence)
         self.assertFalse(result.evidence_summary.has_temporal_evidence)
         self.assertEqual(result.evidence_summary.evidence_count, 2)
+        self.assertIsNotNone(result.hypothesis_snapshot)
+        self.assertEqual(result.hypothesis_snapshot.state, "UNKNOWN")
+        self.assertEqual(result.hypothesis_snapshot.confidence, 0)
+        self.assertEqual(result.hypothesis_snapshot.label, "mixed_evidence")
         self.assertEqual(result.confidence_trend, CONFIDENCE_TREND_UNKNOWN)
         self.assertIsNone(result.confidence_delta)
 
@@ -165,6 +175,11 @@ class RuntimeLoopTests(unittest.TestCase):
 
         self.assertEqual(first.event_id, second.event_id)
         self.assertEqual(first.agent_state.event_id, second.agent_state.event_id)
+
+    def test_agent_cycle_result_has_snapshot_compatibility_defaults(self) -> None:
+        self.assertIsNone(
+            AgentCycleResult.__dataclass_fields__["hypothesis_snapshot"].default
+        )
 
     def test_runtime_updates_dynamic_watchlist(self) -> None:
         orchestrator = RuntimeOrchestrator()

@@ -10,18 +10,27 @@ ROOT = Path(__file__).resolve().parents[4]
 SRC = ROOT / "src"
 FIXTURE = ROOT / "tests" / "fixtures" / "market_data" / "btcusdt_1m_snapshot.json"
 HYPOTHESIS_ENGINE = SRC / "pumpagent" / "runtime" / "modules" / "hypothesis" / "engine.py"
+NOW = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
 
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import HypothesisPackage, RuntimeEvent
-from pumpagent.runtime.domain.enums import ConfidenceLevel, UncertaintyLevel
+from pumpagent.runtime.domain import AgentState, HypothesisPackage, RuntimeEvent
+from pumpagent.runtime.domain.enums import (
+    AgentStateType,
+    ConfidenceLevel,
+    StateTransitionStatus,
+    UncertaintyLevel,
+)
+from pumpagent.runtime.modules.evidence import EvidenceSummary
 from pumpagent.runtime.modules.hypothesis import (
     HypothesisError,
+    HypothesisSnapshot,
     MarketHypothesis,
     add_hypothesis_package,
     build_hypothesis,
     build_hypothesis_package,
+    build_hypothesis_snapshot,
 )
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
@@ -42,6 +51,41 @@ def make_event_with_evidence() -> RuntimeEvent:
     event = add_observation_package(event)
     event = add_structural_evidence(event)
     return add_market_efficiency_evidence(event)
+
+
+def make_agent_state(state: AgentStateType = AgentStateType.UNKNOWN) -> AgentState:
+    return AgentState(
+        event_id="event-1",
+        current_state=state,
+        previous_state=AgentStateType.UNKNOWN,
+        state_transition_status=StateTransitionStatus.UNKNOWN,
+        transition_reason="unit test",
+        supporting_evidence=(),
+        blocking_evidence=(),
+        state_confidence_context=ConfidenceLevel.UNKNOWN,
+    )
+
+
+def make_evidence_summary(
+    *,
+    structural: bool = False,
+    market: bool = False,
+    temporal: bool = False,
+    total_score: float = 0.5,
+) -> EvidenceSummary:
+    evidence_count = sum((structural, market, temporal))
+    return EvidenceSummary(
+        structural_score=total_score if structural else None,
+        market_score=total_score if market else None,
+        temporal_score=total_score if temporal else None,
+        total_score=total_score if evidence_count else 0.0,
+        evidence_count=evidence_count,
+        strongest_evidence_type=None,
+        weakest_evidence_type=None,
+        has_structural_evidence=structural,
+        has_market_evidence=market,
+        has_temporal_evidence=temporal,
+    )
 
 
 class HypothesisEngineTests(unittest.TestCase):
@@ -149,6 +193,116 @@ class HypothesisEngineTests(unittest.TestCase):
         self.assertEqual(hypothesis.market_state, "UNKNOWN")
         self.assertEqual(hypothesis.confidence_score, 0)
         self.assertEqual(hypothesis.status, "CREATED")
+
+    def test_empty_summary_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=0,
+            confidence_trend="UNKNOWN",
+            evidence_summary=make_evidence_summary(),
+            created_at=NOW,
+        )
+
+        self.assertIsInstance(snapshot, HypothesisSnapshot)
+        self.assertEqual(snapshot.state, "UNKNOWN")
+        self.assertEqual(snapshot.confidence, 0)
+        self.assertEqual(snapshot.confidence_trend, "UNKNOWN")
+        self.assertEqual(snapshot.created_at, NOW)
+        self.assertEqual(snapshot.label, "unknown")
+
+    def test_structural_only_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(AgentStateType.IGNITION),
+            confidence=50,
+            confidence_trend="STABLE",
+            evidence_summary=make_evidence_summary(structural=True),
+            created_at=NOW,
+        )
+
+        self.assertEqual(snapshot.state, "IGNITION")
+        self.assertEqual(snapshot.label, "structural_only")
+
+    def test_market_only_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=50,
+            confidence_trend="STABLE",
+            evidence_summary=make_evidence_summary(market=True),
+            created_at=NOW,
+        )
+
+        self.assertEqual(snapshot.label, "market_only")
+
+    def test_temporal_only_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=50,
+            confidence_trend="IMPROVING",
+            evidence_summary=make_evidence_summary(temporal=True),
+            created_at=NOW,
+        )
+
+        self.assertEqual(snapshot.label, "temporal_only")
+
+    def test_mixed_evidence_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=50,
+            confidence_trend="STABLE",
+            evidence_summary=make_evidence_summary(structural=True, market=True),
+            created_at=NOW,
+        )
+
+        self.assertEqual(snapshot.label, "mixed_evidence")
+
+    def test_low_evidence_hypothesis_snapshot(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=0,
+            confidence_trend="WEAKENING",
+            evidence_summary=make_evidence_summary(structural=True, total_score=0.0),
+            created_at=NOW,
+        )
+
+        self.assertEqual(snapshot.label, "low_evidence")
+
+    def test_hypothesis_snapshot_label_selection_is_deterministic(self) -> None:
+        summary = make_evidence_summary(
+            structural=True,
+            market=True,
+            temporal=True,
+            total_score=0.5,
+        )
+
+        first = build_hypothesis_snapshot(
+            agent_state=make_agent_state(AgentStateType.IGNITION),
+            confidence=50,
+            confidence_trend="UNKNOWN",
+            evidence_summary=summary,
+            created_at=NOW,
+        )
+        second = build_hypothesis_snapshot(
+            agent_state=make_agent_state(AgentStateType.IGNITION),
+            confidence=50,
+            confidence_trend="UNKNOWN",
+            evidence_summary=summary,
+            created_at=NOW,
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.label, "mixed_evidence")
+
+    def test_hypothesis_snapshot_accepts_missing_summary(self) -> None:
+        snapshot = build_hypothesis_snapshot(
+            agent_state=make_agent_state(),
+            confidence=0,
+            confidence_trend="UNKNOWN",
+            evidence_summary=None,
+            created_at=NOW,
+        )
+
+        self.assertIsNone(snapshot.evidence_summary)
+        self.assertEqual(snapshot.label, "unknown")
 
     def test_supporting_and_contradicting_evidence_split(self) -> None:
         hypothesis = build_hypothesis(
