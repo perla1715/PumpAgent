@@ -2,199 +2,238 @@
 
 ## Status
 
-Implemented skeleton.
+Implemented MVP.
 
-Perception Engine v0.1 is implemented as a Runtime-safe boundary between
-`MarketSnapshot` and the Hypothesis Engine.
+Perception Engine v0.1 is a Runtime-safe boundary after `MarketSnapshot`.
 
-It is a contract and evidence milestone only.
+It has two currently supported surfaces:
+
+- Clean Perception Evidence Pipeline;
+- Legacy Scanner Compatibility Layer.
+
+The clean evidence pipeline is the architectural path for Runtime evidence.
+
+The legacy scanner helpers remain available for compatibility only.
 
 ---
 
 ## Purpose
 
-The Perception Engine is the first Runtime layer after `MarketSnapshot`.
+The Perception Engine prepares objective market data for downstream Runtime
+reasoning.
 
-It does not predict.
+It extracts neutral facts from `MarketSnapshot` so downstream modules do not
+depend on exchange, transport, bridge, validation, normalizer, or Live Data
+layers.
 
-It does not interpret the market.
+The clean evidence pipeline does not predict.
 
-It extracts objective evidence from market data so downstream Runtime modules
-can reason without depending on exchange, transport, bridge, validation,
-normalizer, or Live Data layers.
+The clean evidence pipeline does not interpret market state.
 
-The quality of every future decision depends on the quality and neutrality of
-perception.
+The clean evidence pipeline does not assign confidence.
+
+The clean evidence pipeline does not produce trading signals.
 
 ---
 
-## Responsibilities
+## Clean Perception Evidence Pipeline
 
-Perception Engine v0.1 reads only:
+Primary MVP API:
 
-- MarketSnapshot
+```python
+build_perception_evidence(snapshot)
+```
 
-It currently produces:
+Input:
 
-- StructuralEvidence
-- MarketEfficiencyEvidence
+- `MarketSnapshot`
 
-The evidence is intentionally simple and objective.
+Output:
 
-Examples of extracted facts include:
+- `PerceptionEvidenceResult`
+  - `StructuralEvidence`
+  - `MarketEfficiencyEvidence`
 
-- Price
-- Volume
-- OHLCV availability
-- Candle count
-- Required OHLCV field presence
-- Latest candle timestamp
-- Latest candle open
-- Latest candle high
-- Latest candle low
-- Latest candle close
-- Latest candle volume
-- Malformed candle indicators
-- Data quality status
-- Missing fields
-- Latency when available
-- Source metadata references when available
-- Latest close
-- First close
-- Close delta
-- Close delta percent when safe
-- Observed high
-- Observed low
-- Observed range size
-- First candle timestamp
-- Last candle timestamp
-- High / low range
-- Open Interest availability
-- Funding availability
-- CVD
-- Liquidations
-- Participation availability facts
-- Missing participation metrics
-- Data quality context
+This path produces objective evidence only.
 
-No conclusions are made here.
+It does not:
 
-Everything remains evidence.
+- interpret market state;
+- classify Agent State;
+- generate hypotheses;
+- assign scenario probabilities;
+- calculate confidence;
+- generate decisions;
+- generate alerts;
+- produce trading signals;
+- orchestrate runtime behavior.
 
-Advanced Perception v1 step 1 adds OHLCV integrity facts to structural evidence
-context.
+### Structural Evidence Facts
 
-These facts describe candle data shape only.
+The clean evidence pipeline currently adds objective structural context:
 
-They do not classify market state, create hypotheses, calculate probability,
-calculate confidence, generate alerts, or imply trading action.
+- OHLCV availability;
+- candle count;
+- required OHLCV field presence;
+- malformed candle indicators;
+- latest candle timestamp;
+- latest candle open;
+- latest candle high;
+- latest candle low;
+- latest candle close;
+- latest candle volume;
+- latest close;
+- first close;
+- close delta;
+- close delta percent when safe;
+- observed high;
+- observed low;
+- observed range size;
+- first candle timestamp;
+- last candle timestamp;
+- high / low range;
+- data quality context.
 
-Advanced Perception v1 step 2 adds latest candle facts to structural evidence
-context.
-
-These facts expose the latest candle timestamp, open, high, low, close, and
-volume as objective values only.
-
-They do not classify market state, create hypotheses, calculate probability,
-calculate confidence, generate alerts, or imply trading action.
-
-Advanced Perception v1 step 3 adds data quality context to evidence context.
-
-These facts carry existing `MarketSnapshot` quality metadata, including data
-quality status, missing fields, latency, raw payload reference, data source,
-schema version, and source metadata references when available.
-
-They do not create synthetic quality scores and do not classify market state,
-create hypotheses, calculate probability, calculate confidence, generate
-alerts, or imply trading action.
-
-Advanced Perception v1 step 4 adds observed range facts to structural evidence
-context.
-
-These facts are derived only from available OHLCV candles and include observed
-high, observed low, observed range size, candle count used, first candle
-timestamp, and last candle timestamp.
-
-They do not infer support, resistance, trend, breakout, volatility regime,
-market structure, probability, confidence, alerts, or trading action.
-
-Advanced Perception v1 step 5 adds participation availability facts to market
-efficiency evidence context.
-
-These facts report whether volume, open interest, funding, CVD, and
-liquidations are available, and which optional participation metrics are
-missing.
-
-They do not evaluate metric quality, infer participation strength, create
-hypotheses, calculate probability, calculate confidence, generate alerts, or
-imply trading action.
-
-Advanced Perception v1 step 6 adds close sequence facts to structural evidence
-context.
-
-These facts use only observed OHLCV close values and include first close,
-latest close, close delta, close delta percent when safe, and candle count
-used.
+These facts describe candle data shape and values only.
 
 They do not classify direction, state, strength, weakness, continuation,
 failure, pump, dump, probability, confidence, alerts, or trading action.
 
-## Market State Detection (MVP)
+### Market Efficiency Evidence Facts
 
-Perception now includes a simple deterministic market state detector for
-scanner output.
+The clean evidence pipeline currently adds objective participation availability
+context:
 
-`detect_market_state(data)` reads:
+- volume availability;
+- open interest availability;
+- funding availability;
+- CVD availability;
+- liquidations availability;
+- missing participation metrics;
+- data quality context.
 
-- `price_change_1m`
-- `price_change_3m`
-- `volume_spike_ratio`
-- `oi_change_1m`
+These facts report whether participation metrics exist.
 
-It returns one of:
-
-- `IGNITION`
-- `CONTINUATION_ALIVE`
-- `WEAKENING`
-- `UNKNOWN`
-
-The detector is rule-based only. It does not create hypotheses, probabilities,
-confidence, decisions, alerts, or trading instructions.
-
-Scanner output can use the helper that prints:
-
-`SYMBOL | STATE | CONF=78% | price | volume | oi | Evidence: + Price increasing; + Volume above average; - OI not increasing`
-
-The evidence text is explanatory only. It does not change state detection,
-confidence scoring, hypotheses, decisions, alerts, or trading instructions.
+They do not evaluate metric quality, infer participation strength, generate
+hypotheses, calculate probability, calculate confidence, generate alerts, or
+imply trading action.
 
 ---
 
-## Observation Principles
+## ObservationPackage APIs
 
-The engine never asks:
+Perception also exposes an ObservationPackage preparation path.
 
-"Is this bullish?"
+Public APIs:
 
-Instead it asks:
+```python
+build_observation_package(snapshot)
+add_observation_package(event)
+```
 
-"What changed?"
+Input:
 
-Examples:
+- `MarketSnapshot`
 
-- OI increased by 8%
-- Volume doubled
-- EMA spread expanded
-- Funding turned negative
-- Price rejected Fib 0.236
+Output:
 
-Only facts.
+- `ObservationPackage`
+
+`ObservationPackage` is currently part of the public Perception output.
+
+It carries normalized Runtime-facing market data:
+
+- normalized price;
+- normalized OHLCV;
+- normalized volume;
+- available metrics;
+- missing metrics;
+- data quality status;
+- optional normalized metrics;
+- source `MarketSnapshot` reference.
+
+This path prepares data for downstream Runtime modules such as Structure.
+
+It does not interpret market state, assign confidence, generate hypotheses,
+produce trading signals, or orchestrate runtime behavior.
+
+---
+
+## Event Compatibility APIs
+
+Perception can write its owned sections into an immutable `RuntimeEvent`.
+
+Compatibility APIs:
+
+```python
+add_perception_evidence(event)
+add_observation_package(event)
+```
+
+`add_perception_evidence(event)` writes only:
+
+- `structural_evidence`;
+- `market_efficiency_evidence`.
+
+`add_observation_package(event)` writes only:
+
+- `observation_package`.
+
+These helpers preserve existing RuntimeEvent sections and do not run the
+Runtime Orchestrator.
+
+---
+
+## Legacy Scanner Compatibility Layer
+
+Perception currently exports scanner helpers for compatibility:
+
+```python
+detect_market_state(data)
+format_market_state_scan_line(data)
+print_market_state_scan(markets)
+```
+
+These helpers are not part of the clean Perception evidence pipeline.
+
+`detect_market_state(data)` reads scanner-style metrics:
+
+- `price_change_1m`;
+- `price_change_3m`;
+- `volume_spike_ratio`;
+- `oi_change_1m`.
+
+It returns scanner labels:
+
+- `IGNITION`;
+- `CONTINUATION_ALIVE`;
+- `WEAKENING`;
+- `UNKNOWN`.
+
+`format_market_state_scan_line(data)` formats scanner output such as:
+
+```text
+SYMBOL | STATE | CONF=78% | price | volume | oi | Evidence: ...
+```
+
+The following belong only to the legacy scanner compatibility layer:
+
+- scanner state labels;
+- `CONF` formatting;
+- market-state scan output.
+
+They are not part of `build_perception_evidence()`.
+
+They are not part of `build_observation_package()`.
+
+They do not change `StructuralEvidence`, `MarketEfficiencyEvidence`, or
+`ObservationPackage` behavior.
 
 ---
 
 ## Runtime Boundaries
 
-Perception Engine v0.1 must not:
+The clean Perception evidence pipeline must not:
 
 - create hypotheses;
 - classify Agent State;
@@ -202,6 +241,8 @@ Perception Engine v0.1 must not:
 - calculate confidence;
 - generate decisions;
 - generate alerts;
+- produce trading signals;
+- orchestrate runtime behavior;
 - access Learning Memory;
 - access Research Plane;
 - access exchange APIs;
@@ -211,20 +252,31 @@ Perception Engine v0.1 must not:
 
 Perception is deterministic and side-effect free.
 
-The same `MarketSnapshot` should produce the same evidence contracts.
+The same `MarketSnapshot` should produce the same clean evidence contracts.
 
 ---
 
-## Output
+## Output Summary
 
-The current output of Perception Engine is:
+Current public Perception outputs:
 
-- StructuralEvidence
-- MarketEfficiencyEvidence
+- `PerceptionEvidenceResult`
+  - `StructuralEvidence`
+  - `MarketEfficiencyEvidence`
+- `ObservationPackage`
 
-These contracts are passed to the Hypothesis Engine.
+Legacy scanner output is compatibility-only text/classification output and is
+not part of the clean evidence pipeline.
 
-Perception does not currently produce advanced structural interpretation or
-advanced market efficiency interpretation.
+---
 
-Those are future milestones.
+## Future Cleanup
+
+The legacy scanner helpers should eventually move out of Perception Engine into
+a dedicated scanner module, such as:
+
+- `scanner.py`;
+- `market_state_scan.py`.
+
+That future cleanup should separate scanner labels and `CONF` formatting from
+the clean Runtime evidence pipeline without changing current behavior.

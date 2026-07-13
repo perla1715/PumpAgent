@@ -31,6 +31,13 @@ from pumpagent.runtime.modules.structure import (
     build_structural_evidence,
     refine_structural_evidence,
 )
+from pumpagent.runtime.modules.structure.candles import to_structure_candles
+from pumpagent.runtime.modules.structure.fibonacci import calculate_fibonacci_levels
+from pumpagent.runtime.modules.structure.indicators import calculate_emas
+from pumpagent.runtime.modules.structure.swings import (
+    detect_swings,
+    latest_valid_impulse,
+)
 
 
 def make_event_with_observation_package() -> RuntimeEvent:
@@ -164,9 +171,10 @@ class StructureEngineTests(unittest.TestCase):
         self.assertIsInstance(evidence, StructuralEvidence)
         self.assertEqual(evidence.trend_structure, "rising_close_sequence")
         self.assertEqual(evidence.structural_bias, "not_assessed")
-        self.assertIn("higher_final_close", evidence.structural_events)
-        self.assertEqual(evidence.evidence_strength, EvidenceStrength.MODERATE)
-        self.assertEqual(evidence.uncertainty, UncertaintyLevel.MEDIUM)
+        self.assertIn("ema_7_unavailable", evidence.structural_events)
+        self.assertIn("no_valid_swing_impulse", evidence.structural_events)
+        self.assertEqual(evidence.evidence_strength, EvidenceStrength.WEAK)
+        self.assertEqual(evidence.uncertainty, UncertaintyLevel.HIGH)
 
     def test_structure_writes_only_structural_evidence(self) -> None:
         event = make_event_with_observation_package()
@@ -321,6 +329,128 @@ class StructureEngineTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertNotIn(term, output_text)
 
+    def test_structure_candle_conversion_normalizes_numeric_values(self) -> None:
+        candles = to_structure_candles(
+            (
+                {
+                    "timestamp": "2026-07-01T12:00:00Z",
+                    "open": "100",
+                    "high": "102",
+                    "low": "99",
+                    "close": "101",
+                    "volume": "42",
+                },
+            )
+        )
+
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(candles[0].candle_index, 0)
+        self.assertEqual(candles[0].open, 100.0)
+        self.assertEqual(candles[0].high, 102.0)
+        self.assertEqual(candles[0].low, 99.0)
+        self.assertEqual(candles[0].close, 101.0)
+        self.assertEqual(candles[0].volume, 42.0)
+
+    def test_ema_warmup_requires_full_periods(self) -> None:
+        six_candles = to_structure_candles(_linear_ohlcv(6))
+        seven_candles = to_structure_candles(_linear_ohlcv(7))
+        fourteen_candles = to_structure_candles(_linear_ohlcv(14))
+        twenty_one_candles = to_structure_candles(_linear_ohlcv(21))
+
+        self.assertEqual(calculate_emas(six_candles).available_periods, ())
+        self.assertEqual(calculate_emas(seven_candles).available_periods, (7,))
+        self.assertEqual(calculate_emas(fourteen_candles).available_periods, (7, 14))
+        self.assertEqual(
+            calculate_emas(twenty_one_candles).available_periods,
+            (7, 14, 21),
+        )
+
+    def test_ema_calculation_uses_sma_seed_after_full_warmup(self) -> None:
+        emas = calculate_emas(to_structure_candles(_linear_ohlcv(21)))
+
+        self.assertEqual(emas.ema_7, 18.0)
+        self.assertEqual(emas.ema_14, 14.5)
+        self.assertEqual(emas.ema_21, 11.0)
+
+    def test_swing_detection_uses_two_left_two_right_pivots(self) -> None:
+        candles = to_structure_candles(_pivot_ohlcv())
+
+        swing_highs, swing_lows = detect_swings(candles)
+
+        self.assertEqual([point.candle_index for point in swing_highs], [3])
+        self.assertEqual([point.price for point in swing_highs], [15.0])
+        self.assertEqual([point.candle_index for point in swing_lows], [5])
+        self.assertEqual([point.price for point in swing_lows], [5.0])
+
+    def test_impulse_detection_uses_latest_opposite_swing_pair(self) -> None:
+        candles = to_structure_candles(_pivot_ohlcv())
+        swing_highs, swing_lows = detect_swings(candles)
+
+        impulse = latest_valid_impulse(swing_highs, swing_lows)
+
+        self.assertTrue(impulse.is_valid)
+        self.assertEqual(impulse.direction, "down")
+        self.assertEqual(impulse.high, 15.0)
+        self.assertEqual(impulse.low, 5.0)
+        self.assertEqual(impulse.start.candle_index, 3)
+        self.assertEqual(impulse.end.candle_index, 5)
+
+    def test_fibonacci_levels_are_calculated_from_valid_impulse(self) -> None:
+        candles = to_structure_candles(_pivot_ohlcv())
+        swing_highs, swing_lows = detect_swings(candles)
+        impulse = latest_valid_impulse(swing_highs, swing_lows)
+
+        levels = calculate_fibonacci_levels(impulse)
+
+        self.assertEqual(
+            [level.ratio for level in levels],
+            [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
+        )
+        self.assertEqual(levels[0].price, 5.0)
+        self.assertEqual(levels[3].price, 10.0)
+        self.assertEqual(levels[-1].price, 15.0)
+
+    def test_build_structural_evidence_serializes_chart_structure(self) -> None:
+        observations = make_observation_package(ohlcv=_structure_ohlcv())
+
+        evidence = build_structural_evidence(observations)
+        chart_structure = evidence.technical_context["chart_structure"]
+
+        self.assertEqual(
+            evidence.trend_structure,
+            "ema_swing_fibonacci_structure_available",
+        )
+        self.assertIn("ema_21_available", evidence.structural_events)
+        self.assertIn("valid_impulse_detected", evidence.structural_events)
+        self.assertIn("fibonacci_levels_available", evidence.structural_events)
+        self.assertEqual(chart_structure["schema_version"], "structure_chart_v1")
+        self.assertEqual(
+            set(chart_structure["emas"]),
+            {
+                "ema_7",
+                "ema_14",
+                "ema_21",
+                "available_periods",
+                "unavailable_periods",
+            },
+        )
+        self.assertEqual(chart_structure["latest_impulse"]["direction"], "down")
+        self.assertTrue(chart_structure["fibonacci_levels"])
+        self.assertEqual(evidence.structural_bias, "not_assessed")
+
+    def test_insufficient_candle_data_returns_partial_structure(self) -> None:
+        observations = make_observation_package(ohlcv=_linear_ohlcv(1))
+
+        evidence = build_structural_evidence(observations)
+        chart_structure = evidence.technical_context["chart_structure"]
+
+        self.assertEqual(evidence.trend_structure, "insufficient_sequence")
+        self.assertEqual(evidence.evidence_strength, EvidenceStrength.UNKNOWN)
+        self.assertEqual(evidence.uncertainty, UncertaintyLevel.HIGH)
+        self.assertIn("insufficient_ohlcv_sequence", evidence.structural_events)
+        self.assertIn("ema_7_unavailable", evidence.structural_events)
+        self.assertEqual(chart_structure["warnings"][0], "insufficient_ohlcv_sequence")
+
 
 def _imports_from(tree: ast.AST) -> tuple[str, ...]:
     imports: list[str] = []
@@ -356,6 +486,51 @@ def _flatten_text(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
     return (str(value),)
+
+
+def _linear_ohlcv(count: int) -> tuple[dict[str, object], ...]:
+    candles = []
+    for index in range(count):
+        close = float(index + 1)
+        candles.append(
+            {
+                "timestamp": f"2026-07-01T12:{index:02d}:00Z",
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": 10.0 + index,
+            }
+        )
+    return tuple(candles)
+
+
+def _pivot_ohlcv() -> tuple[dict[str, object], ...]:
+    highs = (10, 11, 12, 15, 13, 12, 12, 11, 10)
+    lows = (8, 7, 7, 7, 8, 5, 7, 8, 9)
+    candles = []
+    for index, (high, low) in enumerate(zip(highs, lows)):
+        candles.append(
+            {
+                "timestamp": f"2026-07-01T12:{index:02d}:00Z",
+                "open": float(low + 1),
+                "high": float(high),
+                "low": float(low),
+                "close": float((high + low) / 2),
+                "volume": 10.0,
+            }
+        )
+    return tuple(candles)
+
+
+def _structure_ohlcv() -> tuple[dict[str, object], ...]:
+    base = list(_linear_ohlcv(21))
+    pivot = list(_pivot_ohlcv())
+    for index, candle in enumerate(pivot, start=21):
+        updated = dict(candle)
+        updated["timestamp"] = f"2026-07-01T12:{index:02d}:00Z"
+        base.append(updated)
+    return tuple(base)
 
 
 if __name__ == "__main__":

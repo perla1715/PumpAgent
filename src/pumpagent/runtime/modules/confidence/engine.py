@@ -28,7 +28,7 @@ class ConfidenceError(ValueError):
 def build_confidence_assessment(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
     *,
     runtime_event_id: str | None = None,
     data_quality_impact: str = "data_quality_not_independently_assessed_v0.1",
@@ -43,18 +43,33 @@ def build_confidence_assessment(
         runtime_event_id=event_id,
     )
 
-    drivers = _confidence_drivers(hypothesis, agent_state, scenario_probability)
-    reducers = _confidence_reducers(hypothesis, agent_state, scenario_probability)
+    drivers = _confidence_drivers(
+        hypothesis,
+        agent_state,
+        scenario_probability,
+        data_quality_impact=data_quality_impact,
+    )
+    reducers = _confidence_reducers(
+        hypothesis,
+        agent_state,
+        scenario_probability,
+        data_quality_impact=data_quality_impact,
+    )
     uncertainty = _overall_uncertainty(hypothesis, scenario_probability)
-    final_level = _final_confidence_level(agent_state, uncertainty, reducers)
+    final_level = _final_confidence_level(
+        agent_state,
+        scenario_probability,
+        uncertainty,
+        reducers,
+    )
 
     return ConfidenceAssessment(
         event_id=event_id,
         final_confidence_level=final_level,
         confidence_summary=(
-            "Reliability assessed from hypothesis quality, official state "
-            "certainty, scenario uncertainty, evidence, contradictions, and "
-            "available data-quality context."
+            "Reliability assessed from hypothesis support, official state "
+            "certainty, Scenario Probability availability, scenario uncertainty, "
+            "contradictions, and available data-quality context."
         ),
         confidence_drivers=drivers,
         confidence_reducers=reducers,
@@ -64,10 +79,16 @@ def build_confidence_assessment(
         schema_version=hypothesis.schema_version,
         numeric_confidence_score=None,
         reliability_notes=(
-            "Confidence Engine v0.1 evaluates reliability only. It does not "
-            "decide what happens next, generate alerts, or execute trades."
+            "Confidence Engine v0.1 evaluates reliability only for Runtime "
+            "reasoning. It does not inspect raw market metrics, does not decide "
+            "what happens next, generate alerts, or execute trades. HIGH "
+            "confidence is not allowed in this MVP."
         ),
-        calibration_notes="No calibrated numeric confidence score in v0.1.",
+        calibration_notes=(
+            "No calibrated numeric confidence score in v0.1. RuntimeEvent "
+            "confidence is capped at MEDIUM; legacy scanner numeric confidence "
+            "remains separate."
+        ),
     )
 
 
@@ -79,9 +100,6 @@ def add_confidence_assessment(event: RuntimeEvent) -> RuntimeEvent:
 
     if event.agent_state is None:
         raise ConfidenceError("RuntimeEvent.agent_state is required.")
-
-    if event.scenario_probability is None:
-        raise ConfidenceError("RuntimeEvent.scenario_probability is required.")
 
     assessment = build_confidence_assessment(
         event.hypothesis_package,
@@ -96,7 +114,7 @@ def add_confidence_assessment(event: RuntimeEvent) -> RuntimeEvent:
 def _validate_inputs(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
     *,
     runtime_event_id: str,
 ) -> None:
@@ -110,7 +128,10 @@ def _validate_inputs(
             "AgentState.event_id must match the RuntimeEvent.event_id."
         )
 
-    if scenario_probability.event_id != runtime_event_id:
+    if (
+        scenario_probability is not None
+        and scenario_probability.event_id != runtime_event_id
+    ):
         raise ConfidenceError(
             "ScenarioProbability.event_id must match the RuntimeEvent.event_id."
         )
@@ -119,18 +140,39 @@ def _validate_inputs(
 def _confidence_drivers(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
+    *,
+    data_quality_impact: str,
 ) -> tuple[str, ...]:
     drivers: list[str] = []
+
+    if agent_state.current_state != AgentStateType.UNKNOWN:
+        drivers.append("agent_state_known")
+
+    if scenario_probability is not None:
+        drivers.append("scenario_probability_available")
+
+        if scenario_probability.uncertainty not in (
+            UncertaintyLevel.HIGH,
+            UncertaintyLevel.UNKNOWN,
+        ):
+            drivers.append("scenario_uncertainty_not_high")
+
+        if _scenario_weights_sum_valid(scenario_probability):
+            drivers.append("scenario_weights_sum_valid")
 
     if hypothesis.supporting_evidence:
         drivers.append("hypothesis_has_supporting_evidence")
 
-    if agent_state.supporting_evidence:
-        drivers.append("agent_state_has_supporting_evidence")
+    if hypothesis.current_hypothesis_confidence_context not in (
+        ConfidenceLevel.UNKNOWN,
+        ConfidenceLevel.VERY_LOW,
+        ConfidenceLevel.LOW,
+    ):
+        drivers.append("hypothesis_confidence_context_not_low")
 
-    if scenario_probability.scenario_set:
-        drivers.append("scenario_set_available")
+    if _data_quality_is_acceptable(data_quality_impact):
+        drivers.append("data_quality_acceptable")
 
     return tuple(drivers)
 
@@ -138,35 +180,48 @@ def _confidence_drivers(
 def _confidence_reducers(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
+    *,
+    data_quality_impact: str,
 ) -> tuple[str, ...]:
     reducers: list[str] = []
-
-    if hypothesis.uncertainty in (UncertaintyLevel.HIGH, UncertaintyLevel.UNKNOWN):
-        reducers.append("hypothesis_uncertainty_high")
 
     if agent_state.current_state == AgentStateType.UNKNOWN:
         reducers.append("agent_state_unknown")
 
-    if scenario_probability.uncertainty in (
-        UncertaintyLevel.HIGH,
-        UncertaintyLevel.UNKNOWN,
-    ):
-        reducers.append("scenario_uncertainty_high")
+    if scenario_probability is None:
+        reducers.append("scenario_probability_missing")
+    else:
+        if scenario_probability.uncertainty == UncertaintyLevel.HIGH:
+            reducers.append("scenario_uncertainty_high")
+        elif scenario_probability.uncertainty == UncertaintyLevel.UNKNOWN:
+            reducers.append("scenario_uncertainty_unknown")
+
+        if scenario_probability.contradicting_evidence:
+            reducers.append("scenario_has_contradicting_evidence")
+
+    if not hypothesis.supporting_evidence:
+        reducers.append("hypothesis_context_missing_or_generic")
+
+    if hypothesis.uncertainty in (UncertaintyLevel.HIGH, UncertaintyLevel.UNKNOWN):
+        reducers.append("hypothesis_uncertainty_high")
 
     if hypothesis.contradicting_evidence:
         reducers.append("hypothesis_has_contradicting_evidence")
 
-    if scenario_probability.contradicting_evidence:
-        reducers.append("scenario_has_contradicting_evidence")
+    if not _data_quality_is_acceptable(data_quality_impact):
+        reducers.append("data_quality_incomplete_or_poor")
 
     return tuple(reducers)
 
 
 def _overall_uncertainty(
     hypothesis: HypothesisPackage,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
 ) -> UncertaintyLevel:
+    if scenario_probability is None:
+        return UncertaintyLevel.HIGH
+
     if (
         hypothesis.uncertainty == UncertaintyLevel.HIGH
         or scenario_probability.uncertainty == UncertaintyLevel.HIGH
@@ -190,6 +245,7 @@ def _overall_uncertainty(
 
 def _final_confidence_level(
     agent_state: AgentState,
+    scenario_probability: ScenarioProbability | None,
     uncertainty: UncertaintyLevel,
     reducers: tuple[str, ...],
 ) -> ConfidenceLevel:
@@ -204,9 +260,14 @@ def _final_confidence_level(
     if agent_state.current_state == AgentStateType.UNKNOWN:
         return ConfidenceLevel.LOW
 
-    if len(reducers) >= 2:
+    if scenario_probability is None:
         return ConfidenceLevel.LOW
 
+    if reducers:
+        return ConfidenceLevel.LOW
+
+    # HIGH is intentionally unavailable until Confidence is calibrated or
+    # historically validated.
     return ConfidenceLevel.MEDIUM
 
 
@@ -227,3 +288,11 @@ def _data_quality_impact(event: RuntimeEvent) -> str:
         )
 
     return "data_quality_not_available"
+
+
+def _data_quality_is_acceptable(data_quality_impact: str) -> bool:
+    return data_quality_impact.endswith(":valid")
+
+
+def _scenario_weights_sum_valid(scenario_probability: ScenarioProbability) -> bool:
+    return round(sum(scenario_probability.scenario_probabilities.values()), 10) == 1.0

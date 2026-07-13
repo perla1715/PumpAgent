@@ -67,7 +67,7 @@ normalizers, validators, quality translators, or bridge components.
 
 ---
 
-# Runtime Core Processing Flow
+# Lightweight Runtime Loop MVP
 
 MarketSnapshot
 
@@ -100,23 +100,23 @@ an `AgentCycleResult`.
 The Runtime Orchestrator does not make trading decisions, persist state,
 communicate with users, or call external services.
 
-The older full Runtime Core modules for Agent State, Scenario Probability,
+The older `RuntimeEvent` contract modules for Agent State, Scenario Probability,
 Confidence Assessment, and Decision / Alert remain available as separate
-contracts while the lightweight runtime loop is established.
+section-owning contracts while the lightweight runtime loop is established.
 
 The fixture Runtime Orchestrator still supports immutable `RuntimeEvent`
 handoff for the older module contract path. It does not perform market
 analysis, classify alerts, access Live Data, or execute trades.
 
-Runtime Core currently ends at Decision / Alert.
+The older `RuntimeEvent` contract path currently ends at Decision / Alert.
 
 Learning Memory is not orchestrated by the Runtime Orchestrator.
 
 ---
 
-# Thinking Sequence
+# RuntimeEvent Contract Path
 
-The implemented Runtime Core milestone is:
+The older immutable `RuntimeEvent` contract path is:
 
 MarketSnapshot
 
@@ -144,10 +144,10 @@ ConfidenceAssessment
 
 DecisionAlert
 
-Each Runtime module is deterministic, side-effect free, and owns exactly one
-RuntimeEvent section.
+Each module in this contract path is deterministic, side-effect free, and owns
+exactly one RuntimeEvent section.
 
-No Runtime module mutates previous sections.
+No module in this contract path mutates previous sections.
 
 ## Agent Runtime Loop MVP
 
@@ -219,9 +219,16 @@ identity, symbol, exchange, timeframe, and timestamp. This cycle event id is
 passed into `AgentState.event_id`, while `MarketHypothesis.id` remains a
 semantic hypothesis identifier.
 
-Detected `WEAKENING` remains conservatively mapped to `AgentStateType.UNKNOWN`
-until a future transition decision assigns it to a formal state such as
-`CONTINUATION_SATURATION` or `FIRST_FAILURE_CANDIDATE`.
+Detected `WEAKENING` is staged by previous official state. From `UNKNOWN` or
+`IGNITION`, it remains `UNKNOWN`. From `CONTINUATION_ALIVE`, it becomes
+`CONTINUATION_SATURATION`. From `CONTINUATION_SATURATION`, it becomes
+`FIRST_FAILURE_CANDIDATE`. Repeated weakening while already in
+`FIRST_FAILURE_CANDIDATE` remains `FIRST_FAILURE_CANDIDATE`.
+
+The clean `HypothesisPackage` path remains conservative and returns
+`AgentStateType.UNKNOWN` until the clean hypothesis contract contains explicit
+state context. Agent State must translate upstream state context; it must not
+infer official state from generic evidence.
 
 ### Dynamic Watchlist MVP
 
@@ -264,11 +271,12 @@ run asynchronously.
 
 ---
 
-# Implemented Perception Skeleton
+# Implemented Perception MVP
 
-Perception Engine v0.1 is implemented as a Runtime-safe skeleton.
+Perception Engine v0.1 is implemented as a Runtime-safe MVP.
 
-It reads only `MarketSnapshot` and produces objective evidence contracts:
+The clean Perception evidence pipeline reads only `MarketSnapshot` and produces
+objective evidence contracts:
 
 MarketSnapshot
 
@@ -276,7 +284,20 @@ MarketSnapshot
 
 StructuralEvidence + MarketEfficiencyEvidence
 
-Perception v0.1 does not perform market interpretation.
+The primary clean evidence API is:
+
+- `build_perception_evidence()`
+
+Perception also exposes ObservationPackage preparation APIs:
+
+- `build_observation_package()`
+- `add_observation_package()`
+
+`ObservationPackage` is currently part of the public Perception output and
+prepares normalized Runtime-facing market data for downstream modules such as
+Structure.
+
+The clean Perception evidence pipeline does not perform market interpretation.
 
 It does not:
 
@@ -285,23 +306,45 @@ It does not:
 - assign scenario probabilities;
 - calculate confidence;
 - generate decisions or alerts;
+- produce trading signals;
+- orchestrate runtime behavior;
 - access Learning Memory;
 - access Research Plane;
 - access exchange, transport, bridge, validation, normalizer, or Live Data
   layers.
 
-Advanced structural reasoning and market efficiency reasoning remain future
-milestones.
+Perception also retains a legacy scanner compatibility layer:
 
-Structure Engine has an implemented expansion skeleton that can validate
-Perception-produced `StructuralEvidence` without adding interpretation.
+- `detect_market_state()`
+- `format_market_state_scan_line()`
+- `print_market_state_scan()`
 
-Market Efficiency Engine has an implemented expansion skeleton that can validate
-Perception-produced `MarketEfficiencyEvidence` without adding interpretation.
+Scanner state labels, `CONF` formatting, and market-state scan output belong
+only to that legacy compatibility layer. They are not part of
+`build_perception_evidence()` or `build_observation_package()`.
+
+Structure Engine has an implemented MVP that can build objective
+`StructuralEvidence` from `ObservationPackage.normalized_ohlcv` without adding
+interpretation.
+
+It computes EMA7/14/21 with full-period warmup, detects 2-left / 2-right pivot
+swings, derives the latest valid impulse, and emits Fibonacci levels only when
+that impulse exists.
+
+It keeps `ChartStructure` internal by convention and serializes stable
+structural facts into `StructuralEvidence.technical_context["chart_structure"]`.
+
+Serialized EMA evidence includes latest EMA values and availability metadata,
+not full EMA series.
+
+Market Efficiency Engine has an implemented MVP that builds objective
+`MarketEfficiencyEvidence` from `ObservationPackage` without adding
+interpretation.
 
 ## MVP Refinement Contract
 
-Perception owns initial evidence creation.
+Perception owns clean observation packaging and may still create evidence for
+legacy compatibility.
 
 Structure Engine and Market Efficiency Engine do not replace evidence ownership.
 
@@ -332,8 +375,7 @@ Refinement must not:
   validation, normalizers, or transport layers.
 
 In future expansion, Structure Engine and Market Efficiency Engine may deepen
-the evidence produced by Perception before that evidence is consumed by the
-Hypothesis Engine.
+objective evidence before that evidence is consumed by the Hypothesis Engine.
 
 ---
 
@@ -341,7 +383,7 @@ Hypothesis Engine.
 
 ## 1. Perception Engine
 
-Status: implemented skeleton.
+Status: implemented MVP.
 
 Perception Engine v0.1 reads the Runtime `MarketSnapshot` and produces objective
 `StructuralEvidence` and `MarketEfficiencyEvidence`.
@@ -364,41 +406,88 @@ Only objective evidence.
 
 ## 2. Structure Engine
 
-Status: implemented expansion skeleton.
+Status: implemented MVP.
 
-The current Structure Engine expansion validates Perception-produced
-`StructuralEvidence`.
+The current Structure Engine MVP builds objective `StructuralEvidence` from
+normalized OHLCV candles.
 
 It is not part of the current Runtime Orchestrator flow.
 
-Advanced structural reasoning remains planned.
+Preferred public API:
 
-Future examples:
+- `build_structural_evidence()`
 
-- EMA
-- Bollinger
-- Fib
-- Higher High
-- Lower High
-- Compression
-- Expansion
-- Reclaim
-- Breakdown
+Compatibility exports remain:
+
+- `add_structural_evidence()`
+- `refine_structural_evidence()`
+
+Implemented structural facts:
+
+- EMA7, EMA14, and EMA21 with full-period warmup;
+- latest price position relative to available EMAs;
+- deterministic 2-left / 2-right swing pivots;
+- Higher High / Higher Low and Lower High / Lower Low facts;
+- latest valid impulse;
+- Fibonacci levels only when the latest impulse is valid.
+
+Legacy `trend_structure` close-sequence labels remain as compatibility
+fallback:
+
+- `rising_close_sequence`
+- `falling_close_sequence`
+- `flat_close_sequence`
 
 The engine produces structural evidence.
 
 It does not make trading decisions.
 
+It also does not create hypotheses, calculate confidence, interpret OI,
+Funding, CVD, or volume, add a Validation Layer, perform Quality Translation,
+or change Runtime orchestration.
+
 ---
 
 ## 3. Market Efficiency Engine
 
-Status: implemented expansion skeleton.
+Status: implemented MVP.
 
-The current Market Efficiency Engine expansion validates Perception-produced
-`MarketEfficiencyEvidence`.
+The current Market Efficiency Engine MVP builds objective
+`MarketEfficiencyEvidence` from `ObservationPackage`.
 
-It is not part of the current Runtime Orchestrator flow.
+The Runtime loop currently imports and calls the Market Efficiency Engine.
+
+The engine itself does not orchestrate Runtime behavior; it only produces
+evidence.
+
+Preferred public API:
+
+- `build_market_efficiency_evidence()`
+
+Compatibility exports remain:
+
+- `add_market_efficiency_evidence()`
+- `refine_market_efficiency_evidence()`
+- `MarketEfficiencyError`
+
+Current MVP metric handling records availability and raw context values for:
+
+- Volume
+- Open Interest
+- Funding Rate
+- CVD
+- Liquidations
+
+These values are not interpreted and are not assigned trading meaning.
+
+`EvidenceStrength` and `UncertaintyLevel` describe evidence coverage and data
+availability only. They are not market confidence or trade confidence.
+
+Perception may still create `MarketEfficiencyEvidence` for compatibility, but
+the cleaner current path is:
+
+`ObservationPackage` -> `build_market_efficiency_evidence()` ->
+`MarketEfficiencyEvidence`
 
 Advanced market efficiency reasoning remains planned.
 
@@ -407,41 +496,122 @@ Future examples:
 - Participation
 - OI Growth
 - Funding
-- Absorption
-- Price Efficiency
-- Volume Efficiency
+- Absorption evidence
+- Price efficiency evidence
+- Volume efficiency evidence
 
 The engine produces participation and efficiency evidence.
 
 It does not make trading decisions.
 
+It also does not interpret market state, generate hypotheses, assign trading
+confidence, produce trading signals, or orchestrate Runtime behavior.
+
 ---
 
 ## 4. Hypothesis Engine
 
-Creates the current explanation of the market.
+Status: implemented MVP.
 
-Example:
+Creates current-market explanations from prepared Runtime context.
 
-"The continuation is still alive, but participation quality is weakening."
+The current implementation has two paths:
 
-The Hypothesis Engine explains what is most likely happening now.
+- clean `HypothesisPackage` path;
+- legacy / Runtime scanner `MarketHypothesis` path.
 
-It does not own future scenario probability distribution.
+### Clean HypothesisPackage Path
 
-### Hypothesis Engine (MVP)
+The clean package path consumes:
 
-The first lightweight Hypothesis Engine consumes market state, confidence, and
-evidence to produce a working interpretation.
+- `StructuralEvidence`
+- `MarketEfficiencyEvidence`
 
-Core Runtime thinking is:
+It produces `HypothesisPackage`.
 
-`Agent = State + Confidence + Evidence + Hypothesis`
+Preferred package APIs:
 
-The MVP hypothesis is not a prediction and not a decision. It explains the
-current market condition, tracks whether the explanation was created, updated,
-weakened, or replaced, and preserves the evidence that supports or contradicts
-the interpretation.
+- `build_hypothesis_package()`
+- `add_hypothesis_package()`
+
+This path combines upstream objective evidence into a current-condition
+explanation. It does not mutate upstream evidence.
+
+### Legacy / Runtime Scanner MarketHypothesis Path
+
+The legacy Runtime scanner path remains for compatibility.
+
+API:
+
+- `build_hypothesis()`
+
+This path consumes arbitrary Runtime scanner data and may call:
+
+- `detect_market_state()`
+- `calculate_confidence()`
+- `collect_evidence()`
+
+It produces `MarketHypothesis` and supports the main Runtime scanner-style flow.
+
+### Public Hypothesis Exports
+
+Core exports:
+
+- `HypothesisError`
+- `MarketHypothesis`
+- `build_hypothesis()`
+- `build_hypothesis_package()`
+- `add_hypothesis_package()`
+
+Snapshot, history, and evaluator exports:
+
+- `HypothesisSnapshot`
+- `HypothesisSnapshotBuilder`
+- `HypothesisHistory`
+- `HistoryTrendAnalyzer`
+- `HistoryTrendSummary`
+- `build_hypothesis_snapshot()`
+- `HypothesisEvaluator`
+- `HypothesisEvaluation`
+- trend constants
+- evaluation constants
+
+### Lifecycle And Confidence
+
+Hypothesis lifecycle statuses are:
+
+- `CREATED`
+- `UPDATED`
+- `WEAKENED`
+- `REPLACED`
+
+The legacy `MarketHypothesis` path may contain a numeric `confidence_score`.
+
+The clean package path emits `current_hypothesis_confidence_context`.
+
+`current_hypothesis_confidence_context` is not final market confidence and not
+trade confidence. Final confidence remains the responsibility of the Confidence
+Engine if or when that layer is used.
+
+### Diagnostic Context
+
+The MVP also includes diagnostic support objects:
+
+- `HypothesisSnapshot`
+- `HypothesisHistory`
+- `HistoryTrendAnalyzer`
+- `HypothesisEvaluator`
+
+These are deterministic diagnostic helpers. They do not modify Runtime behavior,
+confidence, hypotheses, alerts, probabilities, or trading decisions.
+
+### Boundaries
+
+The Hypothesis Engine may form, update, weaken, or replace hypotheses.
+
+It does not fetch market data directly, mutate upstream evidence, produce final
+trading execution commands, own Telegram alerts, own Runtime orchestration, own
+future scenario probabilities, or own final trade confidence.
 
 ---
 
@@ -460,6 +630,37 @@ The Scenario Probability Engine does not make trading decisions.
 
 It supports reasoning before confidence is evaluated.
 
+Scenario Probability v0.1 translates official `AgentState.current_state` into
+deterministic MVP next-scenario weights. These weights are not calibrated
+predictions and are not final confidence.
+
+Current state-aware policy:
+
+- `UNKNOWN`:
+  - `continue_observation`: 0.40
+  - `insufficient_evidence_persists`: 0.35
+  - `state_clarifies_after_more_data`: 0.25
+  - uncertainty: `HIGH`
+- `CONTINUATION_ALIVE`:
+  - `continuation_persists`: 0.55
+  - `continuation_degrades_to_saturation`: 0.30
+  - `first_failure_candidate_emerges`: 0.15
+  - uncertainty: `MEDIUM`
+- `CONTINUATION_SATURATION`:
+  - `saturation_resolves_to_continuation`: 0.25
+  - `saturation_persists`: 0.45
+  - `first_failure_risk_increases`: 0.30
+  - uncertainty: `MEDIUM`
+- `FIRST_FAILURE_CANDIDATE`:
+  - `failure_candidate_invalidated`: 0.20
+  - `failure_candidate_persists`: 0.45
+  - `first_failure_confirms`: 0.35
+  - uncertainty: `MEDIUM`
+
+The engine must not inspect raw market data, reinterpret Structure or Market
+Efficiency evidence, decide final confidence, generate alerts, or make trading
+decisions.
+
 ---
 
 ## 6. Confidence Engine
@@ -477,15 +678,43 @@ The agent never falls in love with its own prediction.
 
 ### Confidence Engine (MVP)
 
-The first confidence layer is a simple numeric heuristic for scanner output.
-It reads price change, volume spike ratio, and open interest change, then
-returns an integer score from 0 to 100.
+Runtime Confidence v0.1 assesses reliability of the current Runtime reasoning
+chain:
 
-This MVP is intentionally deterministic. Each metric category contributes at
-most one threshold score, so price, volume, and open interest each contribute a
-maximum of 30 points. It is not calibrated, not evidence-weighted, and not a
-final reliability model. Later versions should replace or validate it with
-evidence-based confidence scoring.
+`HypothesisPackage + AgentState + ScenarioProbability + data quality context`
+-> `ConfidenceAssessment`
+
+It does not predict the market, choose actions, generate alerts, inspect raw
+market metrics, or reuse legacy scanner numeric confidence as final
+`RuntimeEvent` confidence.
+
+`HIGH` confidence is not allowed in this MVP. Final Runtime confidence is capped
+at `MEDIUM` until reliability can be calibrated or historically validated.
+
+Current policy:
+
+- `UNKNOWN` Agent State -> `LOW`;
+- missing Scenario Probability -> `LOW`;
+- Scenario Probability uncertainty `HIGH` or `UNKNOWN` -> `LOW`;
+- missing or generic-only hypothesis context -> `LOW`;
+- hypothesis or scenario contradictions -> `LOW`;
+- incomplete, missing, delayed, or corrupted data quality -> `LOW`;
+- non-`UNKNOWN` Agent State plus available Scenario Probability with
+  non-high uncertainty, supporting hypothesis evidence, no contradictions, and
+  acceptable data quality -> `MEDIUM`.
+
+Confidence drivers include known Agent State, Scenario Probability availability,
+non-high scenario uncertainty, valid scenario weight sum, supporting hypothesis
+evidence, and acceptable data quality.
+
+Confidence reducers include unknown Agent State, missing Scenario Probability,
+high or unknown scenario uncertainty, missing or generic hypothesis context,
+contradictions, incomplete or poor data quality, and the MVP cap that prevents
+`HIGH` confidence.
+
+The legacy `calculate_confidence()` helper remains a separate scanner
+compatibility heuristic. It is not the final `RuntimeEvent.confidence_assessment`
+numeric score.
 
 ---
 
@@ -512,15 +741,35 @@ In the MVP, Evidence supports scanner output and is not yet a dedicated
 
 Produces non-execution operational outputs.
 
-Examples:
+Decision / Alert v0.1 translates official Runtime reasoning into conservative
+human attention guidance:
 
-- Observe
-- Wait
-- Warning
-- Alert
-- Review Required
-- Human Decision Required
-- Unknown
+`AgentState + ScenarioProbability + ConfidenceAssessment` -> `DecisionAlert`
+
+It does not reinterpret market data, inspect raw metrics, infer trades, decide
+execution, call Telegram, persist state, or access Learning Memory.
+
+Current MVP policy:
+
+- missing `ConfidenceAssessment` blocks with the existing contract error;
+- missing `ScenarioProbability` -> `REVIEW_REQUIRED`, `INFO`, `WATCH`;
+- `UNKNOWN` Agent State -> `REVIEW_REQUIRED`, `INFO`, `WATCH`;
+- `LOW` Confidence -> `REVIEW_REQUIRED`, `INFO`, `WATCH`;
+- `MEDIUM` Confidence + `CONTINUATION_ALIVE` -> `OBSERVE`, `NONE`,
+  `NO_ACTION`;
+- `MEDIUM` Confidence + `CONTINUATION_SATURATION` -> `WARNING`, `WARNING`,
+  `WARNING`;
+- `MEDIUM` Confidence + `FIRST_FAILURE_CANDIDATE` -> `WARNING`, `WARNING`,
+  `HIGH_ATTENTION`;
+- unsupported future states -> `REVIEW_REQUIRED`, `INFO`, `WATCH`.
+
+`HUMAN_DECISION_REQUIRED` and `CRITICAL` are reserved for future approved
+escalation rules and are not used by default in this MVP.
+
+Decision / Alert messages may ask the human to continue observation, review the
+reasoning chain, monitor the primary scenario, or increase attention. They must
+not include entries, long/short commands, execution advice, or autonomous
+trading instructions.
 
 Decision / Alert does not execute trades.
 
@@ -534,13 +783,23 @@ Learning Memory is not part of the current Runtime Orchestrator path.
 
 It remains a separate boundary for future storage and Research Plane workflows.
 
-It may prepare important cases for later review when explicitly connected, but
-it is not currently orchestrated as part of Runtime Core.
+When explicitly invoked, it classifies a completed `RuntimeEvent` as
+`CASE_READY` or `REVIEW_ONLY`; invalid or inconsistent events are rejected.
+`ObservationPackage` is optional because the RuntimeEvent contract path already
+contains `MarketSnapshot`, `StructuralEvidence`, and
+`MarketEfficiencyEvidence`. A missing Scenario Probability produces a
+`REVIEW_ONLY` case rather than rejection when Confidence and Decision / Alert
+are present.
+
+`LearningMetadata.should_store` means only that a complete case is eligible for
+future storage after human review. It does not persist the case. Review-only
+events set `should_store=False`.
 
 Learning Memory must not change Runtime behavior automatically.
 
-Research Plane work starts only from reviewed or stored cases and remains
-separate from live Runtime decisions.
+It does not perform automatic learning, trigger Research Agent, call Telegram,
+or modify Runtime behavior. Research Plane work starts only from reviewed or
+stored cases and remains separate from live Runtime decisions.
 
 ---
 

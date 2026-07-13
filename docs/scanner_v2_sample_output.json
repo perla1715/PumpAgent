@@ -1,0 +1,71 @@
+[
+  {
+    "contract_version": "1.0",
+    "scanner_version": "Market Participation Scanner V2 MVP",
+    "symbol": "SAMPLEVALIDUSDT.6",
+    "status": "VALID",
+    "timestamp_bucket": 1783889100,
+    "timeframe": "5m",
+    "metrics": {
+      "price_5m_pct": -0.64,
+      "volume_ratio_5m": 1.42,
+      "oi_change_5m_pct": 0.03
+    },
+    "data_quality": {
+      "closed_candles_only": true,
+      "ohlcv_oi_aligned": true,
+      "skip_reason": null,
+      "skip_reason_id": null,
+      "raw_ohlcv_records": 17,
+      "closed_ohlcv_records": 16,
+      "required_closed_ohlcv_records": 11
+    },
+    "failure_error": null
+  },
+  {
+    "contract_version": "1.0",
+    "scanner_version": "Market Participation Scanner V2 MVP",
+    "symbol": "SAMPLESKIPUSDT.6",
+    "status": "SKIPPED",
+    "timestamp_bucket": null,
+    "timeframe": "5m",
+    "metrics": {
+      "price_5m_pct": null,
+      "volume_ratio_5m": null,
+      "oi_change_5m_pct": null
+    },
+    "data_quality": {
+      "closed_candles_only": true,
+      "ohlcv_oi_aligned": null,
+      "skip_reason": "insufficient closed OHLCV history (8/11)",
+      "skip_reason_id": "insufficient_ohlcv_history",
+      "raw_ohlcv_records": 8,
+      "closed_ohlcv_records": 8,
+      "required_closed_ohlcv_records": 11
+    },
+    "failure_error": null
+  },
+  {
+    "contract_version": "1.0",
+    "scanner_version": "Market Participation Scanner V2 MVP",
+    "symbol": "SAMPLEFAILUSDT.6",
+    "status": "FAILED",
+    "timestamp_bucket": null,
+    "timeframe": "5m",
+    "metrics": {
+      "price_5m_pct": null,
+      "volume_ratio_5m": null,
+      "oi_change_5m_pct": null
+    },
+    "data_quality": {
+      "closed_candles_only": true,
+      "ohlcv_oi_aligned": null,
+      "skip_reason": null,
+      "skip_reason_id": null,
+      "raw_ohlcv_records": null,
+      "closed_ohlcv_records": null,
+      "required_closed_ohlcv_records": 11
+    },
+    "failure_error": "batch API request failed: request timed out for /ohlcv-history"
+  }
+]

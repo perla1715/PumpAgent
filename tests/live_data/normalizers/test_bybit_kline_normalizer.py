@@ -126,13 +126,44 @@ class BybitKlineNormalizerErrorHandlingTests(unittest.TestCase):
 
         self.assert_error(result, "missing_raw_data")
 
+    def test_non_mapping_raw_data_returns_malformed_payload(self) -> None:
+        result = normalize_bybit_kline_raw_data(
+            LiveDataResult(success=True, raw_data=["not", "a", "mapping"])
+        )
+
+        self.assert_error(result, "missing_raw_data")
+
     def test_missing_payload_returns_malformed_payload(self) -> None:
         result = normalize_bybit_kline_raw_data(_raw_result_without("payload"))
 
         self.assert_error(result, "missing_payload")
 
+    def test_non_mapping_payload_returns_malformed_payload(self) -> None:
+        raw = _raw_data()
+        raw["payload"] = "not-a-payload"
+
+        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
+
+        self.assert_error(result, "missing_payload")
+
     def test_missing_request_metadata_returns_malformed_payload(self) -> None:
         result = normalize_bybit_kline_raw_data(_raw_result_without("request_metadata"))
+
+        self.assert_error(result, "missing_request_metadata")
+
+    def test_non_mapping_request_metadata_returns_malformed_payload(self) -> None:
+        raw = _raw_data()
+        raw["request_metadata"] = "not-metadata"
+
+        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
+
+        self.assert_error(result, "missing_request_metadata")
+
+    def test_missing_request_metadata_params_returns_malformed_payload(self) -> None:
+        raw = _raw_data()
+        del raw["request_metadata"]["params"]
+
+        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
 
         self.assert_error(result, "missing_request_metadata")
 
@@ -144,9 +175,25 @@ class BybitKlineNormalizerErrorHandlingTests(unittest.TestCase):
 
         self.assert_error(result, "missing_result")
 
+    def test_non_mapping_payload_result_returns_malformed_payload(self) -> None:
+        raw = _raw_data()
+        raw["payload"]["result"] = "not-a-result"
+
+        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
+
+        self.assert_error(result, "missing_result")
+
     def test_missing_payload_result_list_returns_malformed_payload(self) -> None:
         raw = _raw_data()
         del raw["payload"]["result"]["list"]
+
+        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
+
+        self.assert_error(result, "missing_list")
+
+    def test_non_list_payload_result_list_returns_malformed_payload(self) -> None:
+        raw = _raw_data()
+        raw["payload"]["result"]["list"] = "not-a-list"
 
         result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
 
@@ -185,12 +232,16 @@ class BybitKlineNormalizerErrorHandlingTests(unittest.TestCase):
         self.assert_error(result, "invalid_timestamp")
 
     def test_invalid_ohlcv_numeric_conversion_returns_malformed_payload(self) -> None:
-        raw = _raw_data()
-        raw["payload"]["result"]["list"][0][1] = "not-a-number"
+        for column_index in range(1, 6):
+            with self.subTest(column_index=column_index):
+                raw = _raw_data()
+                raw["payload"]["result"]["list"][0][column_index] = "not-a-number"
 
-        result = normalize_bybit_kline_raw_data(LiveDataResult(success=True, raw_data=raw))
+                result = normalize_bybit_kline_raw_data(
+                    LiveDataResult(success=True, raw_data=raw)
+                )
 
-        self.assert_error(result, "invalid_numeric")
+                self.assert_error(result, "invalid_numeric")
 
     def assert_error(self, result: LiveDataResult, reason: str) -> None:
         self.assertFalse(result.success)

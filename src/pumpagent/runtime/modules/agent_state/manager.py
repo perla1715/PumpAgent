@@ -20,9 +20,6 @@ MARKET_STATE_TO_AGENT_STATE = {
     "UNKNOWN": AgentStateType.UNKNOWN,
     "IGNITION": AgentStateType.IGNITION,
     "CONTINUATION_ALIVE": AgentStateType.CONTINUATION_ALIVE,
-    # TODO: Decide whether WEAKENING maps to CONTINUATION_SATURATION,
-    # FIRST_FAILURE_CANDIDATE, or a dedicated future state.
-    "WEAKENING": AgentStateType.UNKNOWN,
 }
 
 
@@ -72,7 +69,10 @@ def build_agent_state_from_market_hypothesis(
     """Build canonical AgentState from a lightweight MarketHypothesis."""
 
     agent_state_event_id = event_id or hypothesis.id
-    current_state = _agent_state_type_from_market_state(hypothesis.market_state)
+    current_state = _agent_state_type_from_market_hypothesis(
+        hypothesis,
+        previous_state=previous_state,
+    )
     transition_status = _transition_status(previous_state, current_state)
 
     return AgentState(
@@ -152,6 +152,44 @@ def _current_state_from_hypothesis(hypothesis: HypothesisPackage) -> AgentStateT
 
 def _agent_state_type_from_market_state(market_state: str) -> AgentStateType:
     return MARKET_STATE_TO_AGENT_STATE.get(str(market_state), AgentStateType.UNKNOWN)
+
+
+def _agent_state_type_from_market_hypothesis(
+    hypothesis: MarketHypothesis,
+    *,
+    previous_state: AgentStateType,
+) -> AgentStateType:
+    market_state = str(hypothesis.market_state)
+
+    if market_state == "WEAKENING":
+        return _weakening_state_from_previous_state(previous_state)
+
+    if market_state == "CONTINUATION_ALIVE":
+        confidence = _confidence_level_from_score(hypothesis.confidence_score)
+        if confidence in (
+            ConfidenceLevel.MEDIUM,
+            ConfidenceLevel.HIGH,
+            ConfidenceLevel.VERY_HIGH,
+        ):
+            return AgentStateType.CONTINUATION_ALIVE
+        return AgentStateType.UNKNOWN
+
+    return _agent_state_type_from_market_state(market_state)
+
+
+def _weakening_state_from_previous_state(
+    previous_state: AgentStateType,
+) -> AgentStateType:
+    if previous_state == AgentStateType.CONTINUATION_ALIVE:
+        return AgentStateType.CONTINUATION_SATURATION
+
+    if previous_state in (
+        AgentStateType.CONTINUATION_SATURATION,
+        AgentStateType.FIRST_FAILURE_CANDIDATE,
+    ):
+        return AgentStateType.FIRST_FAILURE_CANDIDATE
+
+    return AgentStateType.UNKNOWN
 
 
 def _transition_status(

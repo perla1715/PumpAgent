@@ -25,8 +25,10 @@ from pumpagent.runtime.modules.learning_memory import (
     build_learning_metadata,
 )
 from pumpagent.runtime.modules.learning_memory.engine import (
-    REQUIRED_COMPLETED_EVENT_SECTIONS,
+    LearningMemoryExportCategory,
+    REQUIRED_EXPORT_EVENT_SECTIONS,
     RUNTIME_OWNED_EVENT_ID_SECTIONS,
+    classify_runtime_event,
 )
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
@@ -70,9 +72,13 @@ class LearningMemoryEngineTests(unittest.TestCase):
 
         metadata = build_learning_metadata(event, created_at=NOW)
 
-        for section in REQUIRED_COMPLETED_EVENT_SECTIONS:
+        for section in REQUIRED_EXPORT_EVENT_SECTIONS:
             with self.subTest(section=section):
                 self.assertIsNotNone(getattr(event, section))
+        self.assertEqual(
+            classify_runtime_event(event),
+            LearningMemoryExportCategory.CASE_READY,
+        )
         self.assertEqual(metadata.event_id, event.event_id)
         self.assertEqual(metadata.schema_version, event.schema_version)
         self.assertEqual(metadata.case_id, "case-runtime-evt-1")
@@ -83,7 +89,7 @@ class LearningMemoryEngineTests(unittest.TestCase):
     ) -> None:
         event = make_event_with_decision_alert()
 
-        for section in REQUIRED_COMPLETED_EVENT_SECTIONS:
+        for section in REQUIRED_EXPORT_EVENT_SECTIONS:
             with self.subTest(section=section):
                 incomplete_event = event.with_sections(**{section: None})
 
@@ -135,6 +141,55 @@ class LearningMemoryEngineTests(unittest.TestCase):
         self.assertTrue(metadata.outcome_pending)
         self.assertIsNone(metadata.outcome_summary)
         self.assertIsNone(metadata.human_annotation)
+
+    def test_missing_observation_package_remains_case_ready(self) -> None:
+        event = make_event_with_decision_alert().with_sections(
+            observation_package=None
+        )
+
+        metadata = build_learning_metadata(event, created_at=NOW)
+
+        self.assertEqual(
+            classify_runtime_event(event),
+            LearningMemoryExportCategory.CASE_READY,
+        )
+        self.assertTrue(metadata.should_store)
+
+    def test_present_observation_package_event_id_is_validated(self) -> None:
+        event = make_event_with_decision_alert()
+        observation = replace(event.observation_package, event_id="other-event")
+
+        with self.assertRaisesRegex(LearningMemoryError, "observation_package"):
+            build_learning_metadata(
+                event.with_sections(observation_package=observation),
+                created_at=NOW,
+            )
+
+    def test_present_scenario_probability_event_id_is_validated(self) -> None:
+        event = make_event_with_decision_alert()
+        scenario = replace(event.scenario_probability, event_id="other-event")
+
+        with self.assertRaisesRegex(LearningMemoryError, "scenario_probability"):
+            build_learning_metadata(
+                event.with_sections(scenario_probability=scenario),
+                created_at=NOW,
+            )
+
+    def test_missing_scenario_probability_is_review_only(self) -> None:
+        event = make_event_with_decision_alert().with_sections(
+            scenario_probability=None
+        )
+
+        metadata = build_learning_metadata(event, created_at=NOW)
+
+        self.assertEqual(
+            classify_runtime_event(event),
+            LearningMemoryExportCategory.REVIEW_ONLY,
+        )
+        self.assertFalse(metadata.should_store)
+        self.assertEqual(metadata.review_status, ReviewStatus.PENDING)
+        self.assertTrue(metadata.outcome_pending)
+        self.assertIn("Scenario Probability is missing", metadata.storage_reason)
 
     def test_learning_memory_writes_only_learning_metadata(self) -> None:
         event = make_event_with_decision_alert()
@@ -189,6 +244,35 @@ class LearningMemoryEngineTests(unittest.TestCase):
         self.assertIsNone(updated.learning_metadata.lesson_learned)
         self.assertIsNone(updated.learning_metadata.follow_up_event_id)
         self.assertIsNone(updated.learning_metadata.reviewed_by)
+
+    def test_existing_learning_metadata_is_not_overwritten(self) -> None:
+        event = add_learning_metadata(make_event_with_decision_alert())
+
+        with self.assertRaisesRegex(LearningMemoryError, "must be absent"):
+            add_learning_metadata(event)
+
+    def test_learning_memory_import_boundary_remains_standalone(self) -> None:
+        engine_path = (
+            SRC
+            / "pumpagent"
+            / "runtime"
+            / "modules"
+            / "learning_memory"
+            / "engine.py"
+        )
+        source = engine_path.read_text(encoding="utf-8")
+
+        forbidden_imports = (
+            "runtime.orchestrator",
+            "research",
+            "telegram",
+            "persistence",
+            "storage",
+        )
+        for forbidden in forbidden_imports:
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(f"import {forbidden}", source)
+                self.assertNotIn(f"from pumpagent.{forbidden}", source)
 
     def test_learning_memory_requires_decision_alert(self) -> None:
         event = make_base_event()

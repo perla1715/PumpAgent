@@ -31,8 +31,13 @@ def normalize_bybit_kline_raw_data(raw_result: LiveDataResult) -> LiveDataResult
     if raw_data is None:
         return _transformation_error("Bybit raw_data is missing.", "missing_raw_data")
 
+    if not isinstance(raw_data, dict):
+        return _transformation_error("Bybit raw_data is missing.", "missing_raw_data")
+
     payload = raw_data.get("payload")
     if payload is None:
+        return _transformation_error("Bybit raw payload is missing.", "missing_payload")
+    if not isinstance(payload, dict):
         return _transformation_error("Bybit raw payload is missing.", "missing_payload")
 
     request_metadata = raw_data.get("request_metadata")
@@ -41,14 +46,32 @@ def normalize_bybit_kline_raw_data(raw_result: LiveDataResult) -> LiveDataResult
             "Bybit request metadata is missing.",
             "missing_request_metadata",
         )
+    if not isinstance(request_metadata, dict):
+        return _transformation_error(
+            "Bybit request metadata is missing.",
+            "missing_request_metadata",
+        )
 
-    params = request_metadata["params"]
+    params = request_metadata.get("params")
+    if not isinstance(params, dict):
+        return _transformation_error(
+            "Bybit request metadata is missing.",
+            "missing_request_metadata",
+        )
+
     result = payload.get("result")
     if result is None:
+        return _transformation_error("Bybit payload result is missing.", "missing_result")
+    if not isinstance(result, dict):
         return _transformation_error("Bybit payload result is missing.", "missing_result")
 
     candles = result.get("list")
     if candles is None:
+        return _transformation_error(
+            "Bybit payload result.list is missing.",
+            "missing_list",
+        )
+    if not isinstance(candles, list):
         return _transformation_error(
             "Bybit payload result.list is missing.",
             "missing_list",

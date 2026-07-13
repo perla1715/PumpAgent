@@ -2,12 +2,15 @@
 
 ## Status
 
-Implemented expansion skeleton.
+Implemented MVP.
 
-Market Efficiency Engine currently validates Perception-produced
-`MarketEfficiencyEvidence` without adding market interpretation.
+Market Efficiency Engine builds objective `MarketEfficiencyEvidence` from
+`ObservationPackage`.
 
-It is not part of the current Runtime Orchestrator flow.
+The Runtime loop currently imports and calls the Market Efficiency Engine.
+
+The engine itself does not orchestrate Runtime behavior. It only produces
+evidence.
 
 Advanced market efficiency reasoning remains a future milestone.
 
@@ -15,11 +18,11 @@ Advanced market efficiency reasoning remains a future milestone.
 
 ## Purpose
 
-The current Market Efficiency Engine skeleton protects the participation
-evidence boundary.
+The current Market Efficiency Engine MVP protects the participation evidence
+boundary.
 
-It validates that market efficiency evidence belongs to the current Runtime
-event.
+It extracts metric availability and raw participation context from normalized
+observations.
 
 It does not interpret what is happening behind the chart yet.
 
@@ -29,27 +32,93 @@ Future versions may measure market participation and capital behavior.
 
 ---
 
+## Public API
+
+Preferred MVP API:
+
+- `build_market_efficiency_evidence()`
+
+Compatibility and Runtime helpers:
+
+- `add_market_efficiency_evidence()`
+- `refine_market_efficiency_evidence()`
+- `MarketEfficiencyError`
+
+---
+
 ## Current Responsibilities
 
-The current skeleton:
+The current MVP:
 
-- reads `MarketEfficiencyEvidence`;
-- verifies Runtime event identity;
-- returns `MarketEfficiencyEvidence`;
-- may later return an updated `MarketEfficiencyEvidence` with objective context
-  enrichment only;
-- preserves source snapshot identity stored in `market_mechanics_context`;
+- reads `ObservationPackage`;
+- builds objective `MarketEfficiencyEvidence`;
+- records available and missing participation metrics;
+- stores raw context values for volume, Open Interest, Funding Rate, CVD, and
+  liquidations when present;
+- can validate existing Perception-produced `MarketEfficiencyEvidence` through
+  the compatibility refinement path;
+- preserves source observation identity stored in `market_mechanics_context`;
 - remains deterministic;
 - remains side-effect free;
-- does not modify MarketSnapshot;
-- does not modify StructuralEvidence;
-- does not create hypotheses, states, probabilities, confidence, decisions, or
-  alerts.
+- does not modify `MarketSnapshot`;
+- does not modify `StructuralEvidence`;
+- does not create hypotheses, states, probabilities, trading confidence,
+  decisions, trading signals, or alerts.
 
 Refinement must not change ownership of the evidence.
 
-Perception owns initial `MarketEfficiencyEvidence` creation in the current
-Runtime flow.
+Perception may still create `MarketEfficiencyEvidence` for compatibility.
+
+The cleaner current path is:
+
+`ObservationPackage` -> `build_market_efficiency_evidence()` ->
+`MarketEfficiencyEvidence`
+
+---
+
+## Runtime Flow
+
+The Runtime loop currently calls `build_market_efficiency_evidence()` after
+building an `ObservationPackage`.
+
+Market Efficiency does not own the Runtime loop.
+
+It does not call downstream modules, transition state, generate hypotheses,
+calculate trade confidence, or produce trading signals.
+
+---
+
+## Current Metric Behavior
+
+Current MVP metric handling is evidence-only.
+
+The engine records:
+
+- whether Open Interest is available;
+- whether Funding Rate is available;
+- whether CVD is available;
+- whether liquidations are available;
+- whether volume is available;
+- raw context values for available metrics.
+
+It does not interpret these values.
+
+It does not assign trading meaning to Open Interest, Funding Rate, CVD,
+liquidations, or volume.
+
+---
+
+## Evidence Coverage Metadata
+
+`EvidenceStrength` and `UncertaintyLevel` describe evidence coverage and data
+availability.
+
+They are not market confidence.
+
+They are not trade confidence.
+
+They do not express whether a setup is good, bad, alive, dead, likely, or
+actionable.
 
 ---
 
@@ -65,26 +134,20 @@ Future versions may evaluate:
 - Volume Participation
 - Price Efficiency
 - Participation Efficiency
-- Absorption
-- Absorption Reserve
+- Absorption evidence
+- Absorption reserve evidence
 
 ---
 
 ## Future Core Questions
 
-Instead of asking:
+Future versions may support evidence questions such as:
 
-"Is price going up?"
-
-The engine asks:
-
-- Who is pushing price?
-- Is new money entering?
-- Are shorts trapped?
-- Are longs trapped?
-- Is participation increasing?
-- Is participation fading?
-- Is the move becoming inefficient?
+- Which participation metrics are available?
+- Is participation data expanding or contracting?
+- Are raw participation inputs aligned or mixed?
+- Is price movement supported by objective participation evidence?
+- Is participation evidence sufficient for downstream evaluation?
 
 ---
 
@@ -94,20 +157,30 @@ Future versions may produce deeper evidence rather than signals.
 
 Examples:
 
-- Participation expanding
-- Participation weakening
-- Strong absorption
-- Weak participation
-- Short squeeze probability increasing
-- Continuation quality decreasing
+- Participation metric availability summary
+- Participation data expansion evidence
+- Participation data contraction evidence
+- Absorption-related evidence context
+- Price efficiency evidence context
+- Participation efficiency evidence context
 
 ---
 
 ## Collaboration
 
-The current skeleton preserves market efficiency evidence.
+The current MVP produces market efficiency evidence.
 
 It never makes trading decisions.
+
+It never interprets market state.
+
+It never generates hypotheses.
+
+It never assigns trading confidence.
+
+It never produces trading signals.
+
+It never orchestrates Runtime behavior.
 
 Its evidence remains available to:
 

@@ -8,6 +8,7 @@ automatically, or modify Runtime behavior.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 
 from pumpagent.runtime.domain import LearningMetadata, RuntimeEvent
 from pumpagent.runtime.domain.enums import ReviewStatus
@@ -17,25 +18,29 @@ class LearningMemoryError(ValueError):
     """Raised when Learning Memory cannot prepare metadata."""
 
 
-REQUIRED_COMPLETED_EVENT_SECTIONS = (
+class LearningMemoryExportCategory(str, Enum):
+    """Readiness categories for the standalone Learning Memory boundary."""
+
+    CASE_READY = "case_ready"
+    REVIEW_ONLY = "review_only"
+    REJECTED = "rejected"
+
+
+REQUIRED_EXPORT_EVENT_SECTIONS = (
     "market_snapshot",
-    "observation_package",
     "structural_evidence",
     "market_efficiency_evidence",
     "hypothesis_package",
     "agent_state",
-    "scenario_probability",
     "confidence_assessment",
     "decision_alert",
 )
 
 RUNTIME_OWNED_EVENT_ID_SECTIONS = (
-    "observation_package",
     "structural_evidence",
     "market_efficiency_evidence",
     "hypothesis_package",
     "agent_state",
-    "scenario_probability",
     "confidence_assessment",
     "decision_alert",
 )
@@ -48,14 +53,14 @@ def build_learning_metadata(
 ) -> LearningMetadata:
     """Build storage/review metadata without persistence or learning side effects."""
 
-    _validate_event(event)
+    category = classify_runtime_event(event)
     timestamp = created_at or datetime.now(timezone.utc)
 
     return LearningMetadata(
         event_id=event.event_id,
         case_id=_case_id(event),
-        should_store=True,
-        storage_reason=_storage_reason(event),
+        should_store=category is LearningMemoryExportCategory.CASE_READY,
+        storage_reason=_storage_reason(event, category),
         review_status=ReviewStatus.PENDING,
         created_at=timestamp,
         schema_version=event.schema_version,
@@ -79,13 +84,29 @@ def add_learning_metadata(event: RuntimeEvent) -> RuntimeEvent:
     return event.with_sections(learning_metadata=metadata)
 
 
-def _validate_event(event: RuntimeEvent) -> None:
-    for section in REQUIRED_COMPLETED_EVENT_SECTIONS:
+def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
+    """Validate and classify an event without persistence or Runtime side effects."""
+
+    if event.learning_metadata is not None:
+        raise LearningMemoryError(
+            "RuntimeEvent.learning_metadata must be absent before export."
+        )
+
+    for section in REQUIRED_EXPORT_EVENT_SECTIONS:
         if getattr(event, section) is None:
             raise LearningMemoryError(f"RuntimeEvent.{section} is required.")
 
     _validate_market_snapshot_identity(event)
     _validate_runtime_owned_event_ids(event)
+
+    if event.observation_package is not None:
+        _validate_section_event_id(event, "observation_package")
+
+    if event.scenario_probability is None:
+        return LearningMemoryExportCategory.REVIEW_ONLY
+
+    _validate_section_event_id(event, "scenario_probability")
+    return LearningMemoryExportCategory.CASE_READY
 
 
 def _validate_market_snapshot_identity(event: RuntimeEvent) -> None:
@@ -107,22 +128,39 @@ def _validate_market_snapshot_identity(event: RuntimeEvent) -> None:
 
 def _validate_runtime_owned_event_ids(event: RuntimeEvent) -> None:
     for section_name in RUNTIME_OWNED_EVENT_ID_SECTIONS:
-        section = getattr(event, section_name)
-        if section.event_id != event.event_id:
-            raise LearningMemoryError(
-                f"RuntimeEvent.{section_name}.event_id must match "
-                "RuntimeEvent.event_id."
-            )
+        _validate_section_event_id(event, section_name)
+
+
+def _validate_section_event_id(event: RuntimeEvent, section_name: str) -> None:
+    section = getattr(event, section_name)
+    if section.event_id != event.event_id:
+        raise LearningMemoryError(
+            f"RuntimeEvent.{section_name}.event_id must match "
+            "RuntimeEvent.event_id."
+        )
 
 
 def _case_id(event: RuntimeEvent) -> str:
     return f"case-{event.event_id}"
 
 
-def _storage_reason(event: RuntimeEvent) -> str:
+def _storage_reason(
+    event: RuntimeEvent,
+    category: LearningMemoryExportCategory,
+) -> str:
+    if category is LearningMemoryExportCategory.REVIEW_ONLY:
+        return (
+            "RuntimeEvent is available for human review but is not eligible "
+            "for future case storage because Scenario Probability is missing. "
+            "No persistence, automatic learning, Research Agent trigger, or "
+            "Runtime behavior change is performed."
+        )
+
     decision_type = event.decision_alert.decision_type.value
     return (
-        "Store completed RuntimeEvent for future human review; "
+        "Completed RuntimeEvent is eligible for future case storage after "
+        "human review; "
         f"Decision / Alert output was {decision_type}. "
-        "No automatic learning or Runtime behavior change is performed."
+        "No persistence, automatic learning, Research Agent trigger, or "
+        "Runtime behavior change is performed."
     )

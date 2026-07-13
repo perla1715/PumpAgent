@@ -30,7 +30,7 @@ class DecisionAlertError(ValueError):
 def build_decision_alert(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
     confidence_assessment: ConfidenceAssessment,
     *,
     runtime_event_id: str | None = None,
@@ -46,46 +46,20 @@ def build_decision_alert(
         runtime_event_id=event_id,
     )
 
-    if (
-        confidence_assessment.final_confidence_level
-        in (ConfidenceLevel.UNKNOWN, ConfidenceLevel.VERY_LOW, ConfidenceLevel.LOW)
-        or agent_state.current_state == AgentStateType.UNKNOWN
-    ):
-        decision_type = DecisionType.REVIEW_REQUIRED
-        alert_level = AlertLevel.INFO
-        alert_category = AlertCategory.WATCH
-        review_priority = "normal"
-        reason = (
-            "Human review required because confidence is low or official state "
-            "is UNKNOWN."
-        )
-        required_human_action = (
-            "Review the RuntimeEvent reasoning before taking any external action."
-        )
-    else:
-        # Reserved for future approved non-UNKNOWN / higher-confidence rules.
-        # Even this path remains human-facing and non-execution only.
-        decision_type = DecisionType.OBSERVE
-        alert_level = AlertLevel.NONE
-        alert_category = AlertCategory.NO_ACTION
-        review_priority = "low"
-        reason = "No warning or alert condition produced by Decision / Alert v0.1."
-        required_human_action = "Continue observation; no autonomous action is allowed."
+    decision_type, alert_level, alert_category, review_priority, reason = (
+        _attention_policy(agent_state, scenario_probability, confidence_assessment)
+    )
 
     return DecisionAlert(
         event_id=event_id,
         decision_type=decision_type,
         alert_level=alert_level,
-        decision_summary="Human-facing operational output only.",
+        decision_summary="Human-facing operational awareness only.",
         reason=reason,
-        required_human_action=required_human_action,
+        required_human_action=_required_human_action(decision_type),
         non_execution_confirmation=True,
         schema_version=confidence_assessment.schema_version,
-        monitoring_instructions=(
-            "Do not execute trades from this output.",
-            "Use this output only for human review.",
-            f"Monitor scenario: {scenario_probability.primary_scenario}.",
-        ),
+        monitoring_instructions=_monitoring_instructions(scenario_probability),
         review_priority=review_priority,
         invalidation_conditions=(
             "new_market_snapshot_available",
@@ -95,10 +69,10 @@ def build_decision_alert(
         follow_up_required=decision_type
         in (DecisionType.REVIEW_REQUIRED, DecisionType.HUMAN_DECISION_REQUIRED),
         display_message=(
-            "Decision / Alert v0.1 is non-execution and requires human review."
+            "Decision / Alert v0.1 provides operational awareness for human review."
         ),
         notification_context=(
-            "No trade, order, live API call, or autonomous trading signal is produced."
+            "No order, live API call, or autonomous instruction is produced."
         ),
         alert_category=alert_category,
     )
@@ -112,9 +86,6 @@ def add_decision_alert(event: RuntimeEvent) -> RuntimeEvent:
 
     if event.agent_state is None:
         raise DecisionAlertError("RuntimeEvent.agent_state is required.")
-
-    if event.scenario_probability is None:
-        raise DecisionAlertError("RuntimeEvent.scenario_probability is required.")
 
     if event.confidence_assessment is None:
         raise DecisionAlertError("RuntimeEvent.confidence_assessment is required.")
@@ -132,7 +103,7 @@ def add_decision_alert(event: RuntimeEvent) -> RuntimeEvent:
 def _validate_inputs(
     hypothesis: HypothesisPackage,
     agent_state: AgentState,
-    scenario_probability: ScenarioProbability,
+    scenario_probability: ScenarioProbability | None,
     confidence_assessment: ConfidenceAssessment,
     *,
     runtime_event_id: str,
@@ -147,7 +118,10 @@ def _validate_inputs(
             "AgentState.event_id must match the RuntimeEvent.event_id."
         )
 
-    if scenario_probability.event_id != runtime_event_id:
+    if (
+        scenario_probability is not None
+        and scenario_probability.event_id != runtime_event_id
+    ):
         raise DecisionAlertError(
             "ScenarioProbability.event_id must match the RuntimeEvent.event_id."
         )
@@ -156,3 +130,108 @@ def _validate_inputs(
         raise DecisionAlertError(
             "ConfidenceAssessment.event_id must match the RuntimeEvent.event_id."
         )
+
+
+def _attention_policy(
+    agent_state: AgentState,
+    scenario_probability: ScenarioProbability | None,
+    confidence_assessment: ConfidenceAssessment,
+) -> tuple[DecisionType, AlertLevel, AlertCategory, str, str]:
+    if scenario_probability is None:
+        return (
+            DecisionType.REVIEW_REQUIRED,
+            AlertLevel.INFO,
+            AlertCategory.WATCH,
+            "normal",
+            "Review reasoning chain because Scenario Probability is missing.",
+        )
+
+    if agent_state.current_state == AgentStateType.UNKNOWN:
+        return (
+            DecisionType.REVIEW_REQUIRED,
+            AlertLevel.INFO,
+            AlertCategory.WATCH,
+            "normal",
+            "Review reasoning chain because official Agent State is UNKNOWN.",
+        )
+
+    if confidence_assessment.final_confidence_level in (
+        ConfidenceLevel.UNKNOWN,
+        ConfidenceLevel.VERY_LOW,
+        ConfidenceLevel.LOW,
+    ):
+        return (
+            DecisionType.REVIEW_REQUIRED,
+            AlertLevel.INFO,
+            AlertCategory.WATCH,
+            "normal",
+            "Review reasoning chain because Confidence is LOW or unavailable.",
+        )
+
+    if (
+        confidence_assessment.final_confidence_level == ConfidenceLevel.MEDIUM
+        and agent_state.current_state == AgentStateType.CONTINUATION_ALIVE
+    ):
+        return (
+            DecisionType.OBSERVE,
+            AlertLevel.NONE,
+            AlertCategory.NO_ACTION,
+            "low",
+            "Continue observation; no alert condition produced by Decision / Alert v0.1.",
+        )
+
+    if (
+        confidence_assessment.final_confidence_level == ConfidenceLevel.MEDIUM
+        and agent_state.current_state == AgentStateType.CONTINUATION_SATURATION
+    ):
+        return (
+            DecisionType.WARNING,
+            AlertLevel.WARNING,
+            AlertCategory.WARNING,
+            "elevated",
+            "State indicates saturation; increase attention without action advice.",
+        )
+
+    if (
+        confidence_assessment.final_confidence_level == ConfidenceLevel.MEDIUM
+        and agent_state.current_state == AgentStateType.FIRST_FAILURE_CANDIDATE
+    ):
+        return (
+            DecisionType.WARNING,
+            AlertLevel.WARNING,
+            AlertCategory.HIGH_ATTENTION,
+            "high",
+            "First failure candidate requires focused human review.",
+        )
+
+    return (
+        DecisionType.REVIEW_REQUIRED,
+        AlertLevel.INFO,
+        AlertCategory.WATCH,
+        "normal",
+        "Review reasoning chain because this Agent State has no approved MVP rule.",
+    )
+
+
+def _required_human_action(decision_type: DecisionType) -> str:
+    if decision_type == DecisionType.OBSERVE:
+        return "Continue observation; no autonomous action is allowed."
+    if decision_type == DecisionType.WARNING:
+        return "Review the RuntimeEvent reasoning and monitor the active scenario."
+    return "Review the RuntimeEvent reasoning before relying on this output."
+
+
+def _monitoring_instructions(
+    scenario_probability: ScenarioProbability | None,
+) -> tuple[str, ...]:
+    instructions = [
+        "Use this output only for human review.",
+        "No autonomous action is authorized.",
+    ]
+
+    if scenario_probability is None:
+        instructions.append("Review reasoning chain before relying on this output.")
+    else:
+        instructions.append(f"Monitor primary scenario: {scenario_probability.primary_scenario}.")
+
+    return tuple(instructions)

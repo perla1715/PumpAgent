@@ -151,6 +151,46 @@ The output should remain explanatory.
 
 It should not produce trading signals.
 
+## Current MVP Policy
+
+Scenario Probability v0.1 is a state-aware translator.
+
+It reads official `AgentState.current_state` and emits deterministic MVP
+scenario weights. These weights are not calibrated predictions and are not
+final confidence.
+
+Current deterministic weights:
+
+```text
+UNKNOWN:
+- continue_observation: 0.40
+- insufficient_evidence_persists: 0.35
+- state_clarifies_after_more_data: 0.25
+- uncertainty: HIGH
+
+CONTINUATION_ALIVE:
+- continuation_persists: 0.55
+- continuation_degrades_to_saturation: 0.30
+- first_failure_candidate_emerges: 0.15
+- uncertainty: MEDIUM
+
+CONTINUATION_SATURATION:
+- saturation_resolves_to_continuation: 0.25
+- saturation_persists: 0.45
+- first_failure_risk_increases: 0.30
+- uncertainty: MEDIUM
+
+FIRST_FAILURE_CANDIDATE:
+- failure_candidate_invalidated: 0.20
+- failure_candidate_persists: 0.45
+- first_failure_confirms: 0.35
+- uncertainty: MEDIUM
+```
+
+The engine must not inspect raw market data, reinterpret Structure evidence,
+reinterpret Market Efficiency evidence, decide final confidence, generate
+alerts, or make trading decisions.
+
 ---
 
 ## Example Output

@@ -254,7 +254,73 @@ class AgentStateManagerTests(unittest.TestCase):
         self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.UNKNOWN)
         self.assertIn("conservatively unmapped", agent_state.transition_reason)
 
-    def test_market_hypothesis_weakening_conservative_fallback(self) -> None:
+    def test_market_hypothesis_continuation_alive_maps_directly(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.5,
+                "price_change_3m": 2.1,
+                "volume_spike_ratio": 5.1,
+                "oi_change_1m": 0.6,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
+
+        self.assertEqual(hypothesis.market_state, "CONTINUATION_ALIVE")
+        self.assertEqual(agent_state.current_state, AgentStateType.CONTINUATION_ALIVE)
+        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.MEDIUM)
+
+    def test_market_hypothesis_weakening_from_unknown_stays_unknown(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=AgentStateType.UNKNOWN,
+        )
+
+        self.assertEqual(hypothesis.market_state, "WEAKENING")
+        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertEqual(agent_state.previous_state, AgentStateType.UNKNOWN)
+        self.assertEqual(
+            agent_state.state_transition_status,
+            StateTransitionStatus.UNCHANGED,
+        )
+        self.assertIn("WEAKENING", agent_state.transition_reason)
+
+    def test_market_hypothesis_weakening_from_ignition_stays_unknown(self) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=AgentStateType.IGNITION,
+        )
+
+        self.assertEqual(hypothesis.market_state, "WEAKENING")
+        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertEqual(agent_state.previous_state, AgentStateType.IGNITION)
+        self.assertEqual(
+            agent_state.state_transition_status,
+            StateTransitionStatus.CHANGED,
+        )
+        self.assertIn("WEAKENING", agent_state.transition_reason)
+
+    def test_market_hypothesis_weakening_from_continuation_alive_saturates(
+        self,
+    ) -> None:
         hypothesis = build_hypothesis(
             {
                 "price_change_1m": 0.1,
@@ -270,11 +336,78 @@ class AgentStateManagerTests(unittest.TestCase):
         )
 
         self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertEqual(
+            agent_state.current_state,
+            AgentStateType.CONTINUATION_SATURATION,
+        )
         self.assertEqual(agent_state.previous_state, AgentStateType.CONTINUATION_ALIVE)
         self.assertEqual(
             agent_state.state_transition_status,
             StateTransitionStatus.CHANGED,
+        )
+        self.assertIn("WEAKENING", agent_state.transition_reason)
+
+    def test_market_hypothesis_weakening_from_saturation_becomes_failure_candidate(
+        self,
+    ) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=AgentStateType.CONTINUATION_SATURATION,
+        )
+
+        self.assertEqual(hypothesis.market_state, "WEAKENING")
+        self.assertEqual(
+            agent_state.current_state,
+            AgentStateType.FIRST_FAILURE_CANDIDATE,
+        )
+        self.assertEqual(
+            agent_state.previous_state,
+            AgentStateType.CONTINUATION_SATURATION,
+        )
+        self.assertEqual(
+            agent_state.state_transition_status,
+            StateTransitionStatus.CHANGED,
+        )
+        self.assertIn("WEAKENING", agent_state.transition_reason)
+
+    def test_market_hypothesis_weakening_from_failure_candidate_stays_candidate(
+        self,
+    ) -> None:
+        hypothesis = build_hypothesis(
+            {
+                "price_change_1m": 0.1,
+                "price_change_3m": 0.5,
+                "volume_spike_ratio": 1.0,
+                "oi_change_1m": 0.0,
+            }
+        )
+
+        agent_state = build_agent_state_from_market_hypothesis(
+            hypothesis,
+            previous_state=AgentStateType.FIRST_FAILURE_CANDIDATE,
+        )
+
+        self.assertEqual(hypothesis.market_state, "WEAKENING")
+        self.assertEqual(
+            agent_state.current_state,
+            AgentStateType.FIRST_FAILURE_CANDIDATE,
+        )
+        self.assertEqual(
+            agent_state.previous_state,
+            AgentStateType.FIRST_FAILURE_CANDIDATE,
+        )
+        self.assertEqual(
+            agent_state.state_transition_status,
+            StateTransitionStatus.UNCHANGED,
         )
         self.assertIn("WEAKENING", agent_state.transition_reason)
 

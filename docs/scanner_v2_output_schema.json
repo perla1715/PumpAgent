@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pumpagent.local/schemas/scanner_v2_output_schema.json",
+  "title": "PumpAgent Scanner V2 Proposed Normalized Per-Market Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "scanner_version",
+    "symbol",
+    "status",
+    "timestamp_bucket",
+    "timeframe",
+    "metrics",
+    "data_quality",
+    "failure_error"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "scanner_version": {
+      "type": "string",
+      "const": "Market Participation Scanner V2 MVP"
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+USDT\\.6$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["VALID", "SKIPPED", "FAILED"]
+    },
+    "timestamp_bucket": {
+      "type": ["integer", "null"],
+      "description": "Normalized 5-minute Unix timestamp bucket in seconds."
+    },
+    "timeframe": {
+      "type": "string",
+      "const": "5m"
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "price_5m_pct",
+        "volume_ratio_5m",
+        "oi_change_5m_pct"
+      ],
+      "properties": {
+        "price_5m_pct": {
+          "type": ["number", "null"]
+        },
+        "volume_ratio_5m": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "oi_change_5m_pct": {
+          "type": ["number", "null"]
+        }
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "closed_candles_only",
+        "ohlcv_oi_aligned",
+        "skip_reason",
+        "skip_reason_id",
+        "raw_ohlcv_records",
+        "closed_ohlcv_records",
+        "required_closed_ohlcv_records"
+      ],
+      "properties": {
+        "closed_candles_only": {
+          "type": "boolean"
+        },
+        "ohlcv_oi_aligned": {
+          "type": ["boolean", "null"]
+        },
+        "skip_reason": {
+          "type": ["string", "null"]
+        },
+        "skip_reason_id": {
+          "type": ["string", "null"],
+          "enum": [
+            "insufficient_ohlcv_history",
+            "insufficient_oi_history",
+            "timestamp_mismatch",
+            "invalid_price_data",
+            "invalid_volume_data",
+            "zero_volume_baseline",
+            "invalid_oi_data",
+            "zero_previous_oi",
+            "other",
+            null
+          ]
+        },
+        "raw_ohlcv_records": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "closed_ohlcv_records": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "required_closed_ohlcv_records": {
+          "type": "integer",
+          "const": 11
+        }
+      }
+    },
+    "failure_error": {
+      "type": ["string", "null"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "VALID"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "timestamp_bucket": {
+            "type": "integer"
+          },
+          "metrics": {
+            "properties": {
+              "price_5m_pct": {
+                "type": "number"
+              },
+              "volume_ratio_5m": {
+                "type": "number"
+              },
+              "oi_change_5m_pct": {
+                "type": "number"
+              }
+            }
+          },
+          "data_quality": {
+            "properties": {
+              "ohlcv_oi_aligned": {
+                "const": true
+              },
+              "skip_reason": {
+                "type": "null"
+              },
+              "skip_reason_id": {
+                "type": "null"
+              }
+            }
+          },
+          "failure_error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "SKIPPED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "metrics": {
+            "properties": {
+              "price_5m_pct": {
+                "type": "null"
+              },
+              "volume_ratio_5m": {
+                "type": "null"
+              },
+              "oi_change_5m_pct": {
+                "type": "null"
+              }
+            }
+          },
+          "data_quality": {
+            "properties": {
+              "skip_reason": {
+                "type": "string"
+              },
+              "skip_reason_id": {
+                "type": "string"
+              }
+            }
+          },
+          "failure_error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FAILED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "timestamp_bucket": {
+            "type": "null"
+          },
+          "metrics": {
+            "properties": {
+              "price_5m_pct": {
+                "type": "null"
+              },
+              "volume_ratio_5m": {
+                "type": "null"
+              },
+              "oi_change_5m_pct": {
+                "type": "null"
+              }
+            }
+          },
+          "failure_error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

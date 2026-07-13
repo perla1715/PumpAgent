@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -14,10 +15,18 @@ CONFIDENCE_ENGINE = SRC / "pumpagent" / "runtime" / "modules" / "confidence" / "
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import ConfidenceAssessment, RuntimeEvent
+from pumpagent.runtime.domain import (
+    AgentState,
+    ConfidenceAssessment,
+    HypothesisPackage,
+    RuntimeEvent,
+    ScenarioProbability,
+)
 from pumpagent.runtime.domain.enums import (
     AgentStateType,
     ConfidenceLevel,
+    DataQualityStatus,
+    StateTransitionStatus,
     UncertaintyLevel,
 )
 from pumpagent.runtime.modules.agent_state import add_agent_state
@@ -51,6 +60,68 @@ def make_event_with_scenario_probability() -> RuntimeEvent:
     event = add_hypothesis_package(event)
     event = add_agent_state(event)
     return add_scenario_probability(event)
+
+
+def make_hypothesis_package(
+    *,
+    event_id: str = "runtime-evt-1",
+    supporting_evidence: tuple[str, ...] = ("structure:mock",),
+    contradicting_evidence: tuple[str, ...] = (),
+    uncertainty: UncertaintyLevel = UncertaintyLevel.MEDIUM,
+    confidence_context: ConfidenceLevel = ConfidenceLevel.MEDIUM,
+) -> HypothesisPackage:
+    return HypothesisPackage(
+        event_id=event_id,
+        hypothesis_label="current_condition_explanation",
+        hypothesis_summary="Mock current-condition explanation.",
+        supporting_evidence=supporting_evidence,
+        contradicting_evidence=contradicting_evidence,
+        competing_hypotheses=(),
+        current_hypothesis_confidence_context=confidence_context,
+        reasoning_notes="Mock hypothesis for confidence tests.",
+        uncertainty=uncertainty,
+    )
+
+
+def make_agent_state(
+    current_state: AgentStateType,
+    *,
+    event_id: str = "runtime-evt-1",
+) -> AgentState:
+    return AgentState(
+        event_id=event_id,
+        current_state=current_state,
+        previous_state=AgentStateType.UNKNOWN,
+        state_transition_status=StateTransitionStatus.CHANGED
+        if current_state != AgentStateType.UNKNOWN
+        else StateTransitionStatus.UNCHANGED,
+        transition_reason="Mock official state for confidence tests.",
+        supporting_evidence=("state:mock",),
+        blocking_evidence=(),
+        state_confidence_context=ConfidenceLevel.MEDIUM,
+    )
+
+
+def make_scenario_probability(
+    *,
+    event_id: str = "runtime-evt-1",
+    uncertainty: UncertaintyLevel = UncertaintyLevel.MEDIUM,
+    contradicting_evidence: tuple[str, ...] = (),
+) -> ScenarioProbability:
+    return ScenarioProbability(
+        event_id=event_id,
+        scenario_set=("continuation_persists", "first_failure_candidate_emerges"),
+        scenario_probabilities={
+            "continuation_persists": 0.55,
+            "first_failure_candidate_emerges": 0.45,
+        },
+        primary_scenario="continuation_persists",
+        alternative_scenarios=("first_failure_candidate_emerges",),
+        supporting_evidence=("scenario:mock",),
+        contradicting_evidence=contradicting_evidence,
+        uncertainty=uncertainty,
+        monitoring_focus=("continuation_quality",),
+    )
 
 
 class ConfidenceEngineTests(unittest.TestCase):
@@ -138,6 +209,7 @@ class ConfidenceEngineTests(unittest.TestCase):
         self.assertIn("evaluates reliability only", assessment.reliability_notes)
         self.assertIn("does not decide", assessment.reliability_notes)
         self.assertIn("generate alerts", assessment.reliability_notes)
+        self.assertIn("HIGH confidence is not allowed", assessment.reliability_notes)
 
     def test_confidence_writes_only_confidence_assessment(self) -> None:
         event = make_event_with_scenario_probability()
@@ -213,7 +285,7 @@ class ConfidenceEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfidenceError, "agent_state"):
             add_confidence_assessment(event)
 
-    def test_confidence_requires_scenario_probability(self) -> None:
+    def test_missing_scenario_probability_forces_low_confidence(self) -> None:
         event = RuntimeEvent(
             event_id="runtime-evt-1",
             schema_version="1.0",
@@ -229,8 +301,17 @@ class ConfidenceEngineTests(unittest.TestCase):
         event = add_hypothesis_package(event)
         event = add_agent_state(event)
 
-        with self.assertRaisesRegex(ConfidenceError, "scenario_probability"):
-            add_confidence_assessment(event)
+        updated = add_confidence_assessment(event)
+
+        self.assertEqual(
+            updated.confidence_assessment.final_confidence_level,
+            ConfidenceLevel.LOW,
+        )
+        self.assertIn(
+            "scenario_probability_missing",
+            updated.confidence_assessment.confidence_reducers,
+        )
+        self.assertIsNone(updated.scenario_probability)
 
     def test_confidence_is_lower_when_uncertainty_is_high(self) -> None:
         event = make_event_with_scenario_probability()
@@ -247,6 +328,17 @@ class ConfidenceEngineTests(unittest.TestCase):
             updated.confidence_assessment.confidence_reducers,
         )
 
+    def test_confidence_is_low_when_scenario_uncertainty_is_unknown(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(uncertainty=UncertaintyLevel.UNKNOWN),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.LOW)
+        self.assertIn("scenario_uncertainty_unknown", assessment.confidence_reducers)
+
     def test_confidence_preserves_uncertainty_when_agent_state_unknown(self) -> None:
         event = make_event_with_scenario_probability()
 
@@ -261,6 +353,108 @@ class ConfidenceEngineTests(unittest.TestCase):
             "agent_state_unknown",
             updated.confidence_assessment.confidence_reducers,
         )
+
+    def test_known_state_valid_scenario_support_and_data_quality_returns_medium(
+        self,
+    ) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.MEDIUM)
+        self.assertEqual(assessment.uncertainty_level, UncertaintyLevel.MEDIUM)
+        self.assertIn("agent_state_known", assessment.confidence_drivers)
+        self.assertIn(
+            "scenario_probability_available",
+            assessment.confidence_drivers,
+        )
+        self.assertIn("scenario_uncertainty_not_high", assessment.confidence_drivers)
+        self.assertIn("scenario_weights_sum_valid", assessment.confidence_drivers)
+        self.assertIn(
+            "hypothesis_has_supporting_evidence",
+            assessment.confidence_drivers,
+        )
+        self.assertIn("data_quality_acceptable", assessment.confidence_drivers)
+        self.assertEqual(assessment.confidence_reducers, ())
+
+    def test_contradictions_reduce_confidence_to_low(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(contradicting_evidence=("structure:mixed",)),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.LOW)
+        self.assertIn(
+            "hypothesis_has_contradicting_evidence",
+            assessment.confidence_reducers,
+        )
+
+    def test_scenario_contradictions_reduce_confidence_to_low(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(contradicting_evidence=("scenario:mixed",)),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.LOW)
+        self.assertIn(
+            "scenario_has_contradicting_evidence",
+            assessment.confidence_reducers,
+        )
+
+    def test_missing_hypothesis_support_reduces_confidence_to_low(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(supporting_evidence=()),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.LOW)
+        self.assertIn(
+            "hypothesis_context_missing_or_generic",
+            assessment.confidence_reducers,
+        )
+
+    def test_poor_data_quality_reduces_confidence_to_low(self) -> None:
+        event = make_event_with_scenario_probability()
+        delayed_snapshot = replace(
+            event.market_snapshot,
+            data_quality_status=DataQualityStatus.DELAYED,
+        )
+        event = event.with_sections(market_snapshot=delayed_snapshot)
+
+        updated = add_confidence_assessment(event)
+
+        self.assertEqual(
+            updated.confidence_assessment.final_confidence_level,
+            ConfidenceLevel.LOW,
+        )
+        self.assertIn(
+            "data_quality_incomplete_or_poor",
+            updated.confidence_assessment.confidence_reducers,
+        )
+
+    def test_high_confidence_is_never_produced_in_mvp(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(
+                uncertainty=UncertaintyLevel.LOW,
+                confidence_context=ConfidenceLevel.VERY_HIGH,
+            ),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(uncertainty=UncertaintyLevel.LOW),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.MEDIUM)
+        self.assertNotEqual(assessment.final_confidence_level, ConfidenceLevel.HIGH)
+        self.assertIn("capped at MEDIUM", assessment.calibration_notes)
 
     def test_confidence_assessment_remains_final_reliability_not_pre_state(
         self,
@@ -278,6 +472,19 @@ class ConfidenceEngineTests(unittest.TestCase):
         self.assertIn("scenario uncertainty", assessment.confidence_summary)
         self.assertEqual(assessment.final_confidence_level, ConfidenceLevel.LOW)
 
+    def test_runtime_event_confidence_does_not_use_legacy_numeric_confidence(
+        self,
+    ) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertIsNone(assessment.numeric_confidence_score)
+        self.assertEqual(calculate_confidence({"price_change_1m": 100.0}), 30)
+
     def test_confidence_imports_required_final_reliability_inputs_only(self) -> None:
         tree = ast.parse(CONFIDENCE_ENGINE.read_text(encoding="utf-8"))
         imports = _imports_from(tree)
@@ -291,6 +498,10 @@ class ConfidenceEngineTests(unittest.TestCase):
             any(
                 imported == "pumpagent.runtime.modules.decision_alert"
                 or imported.startswith("pumpagent.runtime.modules.decision_alert.")
+                or imported == "pumpagent.live_data"
+                or imported.startswith("pumpagent.live_data.")
+                or imported == "pumpagent.runtime.modules.market_data"
+                or imported.startswith("pumpagent.runtime.modules.market_data.")
                 or imported == "pumpagent.runtime.modules.trading"
                 or imported.startswith("pumpagent.runtime.modules.trading.")
                 for imported in imports

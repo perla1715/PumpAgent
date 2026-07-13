@@ -16,8 +16,18 @@ SCENARIO_ENGINE = (
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import RuntimeEvent, ScenarioProbability
-from pumpagent.runtime.domain.enums import AgentStateType, UncertaintyLevel
+from pumpagent.runtime.domain import (
+    AgentState,
+    HypothesisPackage,
+    RuntimeEvent,
+    ScenarioProbability,
+)
+from pumpagent.runtime.domain.enums import (
+    AgentStateType,
+    ConfidenceLevel,
+    StateTransitionStatus,
+    UncertaintyLevel,
+)
 from pumpagent.runtime.modules.agent_state import add_agent_state
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
@@ -46,6 +56,39 @@ def make_event_with_agent_state() -> RuntimeEvent:
     event = add_market_efficiency_evidence(event)
     event = add_hypothesis_package(event)
     return add_agent_state(event)
+
+
+def make_hypothesis_package(event_id: str = "runtime-evt-1") -> HypothesisPackage:
+    return HypothesisPackage(
+        event_id=event_id,
+        hypothesis_label="current_condition_explanation",
+        hypothesis_summary="Mock current-condition explanation.",
+        supporting_evidence=("structure:mock",),
+        contradicting_evidence=(),
+        competing_hypotheses=(),
+        current_hypothesis_confidence_context=ConfidenceLevel.MEDIUM,
+        reasoning_notes="Mock hypothesis for scenario probability tests.",
+        uncertainty=UncertaintyLevel.MEDIUM,
+    )
+
+
+def make_agent_state(
+    current_state: AgentStateType,
+    *,
+    event_id: str = "runtime-evt-1",
+) -> AgentState:
+    return AgentState(
+        event_id=event_id,
+        current_state=current_state,
+        previous_state=AgentStateType.UNKNOWN,
+        state_transition_status=StateTransitionStatus.CHANGED
+        if current_state != AgentStateType.UNKNOWN
+        else StateTransitionStatus.UNCHANGED,
+        transition_reason="Mock official state for scenario probability tests.",
+        supporting_evidence=("state:mock",),
+        blocking_evidence=(),
+        state_confidence_context=ConfidenceLevel.MEDIUM,
+    )
 
 
 class ScenarioProbabilityEngineTests(unittest.TestCase):
@@ -82,13 +125,10 @@ class ScenarioProbabilityEngineTests(unittest.TestCase):
             "continue_observation",
         )
         self.assertEqual(scenario_probability.uncertainty, UncertaintyLevel.HIGH)
-        self.assertIn(
-            "contextual and illustrative",
-            scenario_probability.scenario_notes,
-        )
-        self.assertIn("not final confidence", scenario_probability.scenario_notes)
-        self.assertIn("not decisions", scenario_probability.scenario_notes)
-        self.assertIn("not alert triggers", scenario_probability.scenario_notes)
+        self.assertIn("deterministic MVP weights", scenario_probability.scenario_notes)
+        self.assertIn("produce final confidence", scenario_probability.scenario_notes)
+        self.assertIn("make decisions", scenario_probability.scenario_notes)
+        self.assertIn("trigger alerts", scenario_probability.scenario_notes)
         self.assertAlmostEqual(
             sum(scenario_probability.scenario_probabilities.values()),
             1.0,
@@ -191,6 +231,120 @@ class ScenarioProbabilityEngineTests(unittest.TestCase):
             updated.scenario_probability.scenario_notes,
         )
 
+    def test_scenario_probability_uses_state_aware_mvp_weights(self) -> None:
+        cases = (
+            (
+                AgentStateType.UNKNOWN,
+                {
+                    "continue_observation": 0.40,
+                    "insufficient_evidence_persists": 0.35,
+                    "state_clarifies_after_more_data": 0.25,
+                },
+                "continue_observation",
+                UncertaintyLevel.HIGH,
+                (
+                    "collect_more_evidence",
+                    "wait_for_state_clarity",
+                    "monitor_missing_or_contradicting_evidence",
+                ),
+            ),
+            (
+                AgentStateType.CONTINUATION_ALIVE,
+                {
+                    "continuation_persists": 0.55,
+                    "continuation_degrades_to_saturation": 0.30,
+                    "first_failure_candidate_emerges": 0.15,
+                },
+                "continuation_persists",
+                UncertaintyLevel.MEDIUM,
+                (
+                    "continuation_quality",
+                    "participation_support",
+                    "contradiction_emergence",
+                ),
+            ),
+            (
+                AgentStateType.CONTINUATION_SATURATION,
+                {
+                    "saturation_resolves_to_continuation": 0.25,
+                    "saturation_persists": 0.45,
+                    "first_failure_risk_increases": 0.30,
+                },
+                "saturation_persists",
+                UncertaintyLevel.MEDIUM,
+                (
+                    "reclaim_quality",
+                    "weakening_persistence",
+                    "participation_deterioration",
+                ),
+            ),
+            (
+                AgentStateType.FIRST_FAILURE_CANDIDATE,
+                {
+                    "failure_candidate_invalidated": 0.20,
+                    "failure_candidate_persists": 0.45,
+                    "first_failure_confirms": 0.35,
+                },
+                "failure_candidate_persists",
+                UncertaintyLevel.MEDIUM,
+                (
+                    "failed_reclaim",
+                    "contradiction_persistence",
+                    "invalidation_evidence",
+                ),
+            ),
+        )
+
+        for (
+            current_state,
+            expected_probabilities,
+            expected_primary,
+            expected_uncertainty,
+            expected_monitoring_focus,
+        ) in cases:
+            with self.subTest(current_state=current_state):
+                scenario_probability = build_scenario_probability(
+                    make_hypothesis_package(),
+                    make_agent_state(current_state),
+                )
+
+                self.assertEqual(
+                    scenario_probability.scenario_set,
+                    tuple(expected_probabilities),
+                )
+                self.assertEqual(
+                    scenario_probability.scenario_probabilities,
+                    expected_probabilities,
+                )
+                self.assertEqual(
+                    scenario_probability.primary_scenario,
+                    expected_primary,
+                )
+                self.assertEqual(
+                    scenario_probability.alternative_scenarios,
+                    tuple(
+                        scenario
+                        for scenario in expected_probabilities
+                        if scenario != expected_primary
+                    ),
+                )
+                self.assertEqual(
+                    scenario_probability.uncertainty,
+                    expected_uncertainty,
+                )
+                self.assertEqual(
+                    scenario_probability.monitoring_focus,
+                    expected_monitoring_focus,
+                )
+                self.assertAlmostEqual(
+                    sum(scenario_probability.scenario_probabilities.values()),
+                    1.0,
+                )
+                self.assertEqual(
+                    scenario_probability.metadata["probability_model"],
+                    "deterministic_mvp_weights",
+                )
+
     def test_scenario_probability_does_not_import_confidence_or_decision_contracts(
         self,
     ) -> None:
@@ -198,6 +352,8 @@ class ScenarioProbabilityEngineTests(unittest.TestCase):
         imports = _imports_from(tree)
         imported_names = _imported_names_from(tree)
         forbidden_modules = (
+            "pumpagent.live_data",
+            "pumpagent.runtime.modules.market_data",
             "pumpagent.runtime.modules.confidence",
             "pumpagent.runtime.modules.decision_alert",
             "pumpagent.runtime.modules.trading",
