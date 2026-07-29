@@ -68,13 +68,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(counts, sort_keys=True))
         elif args.command == "assess-readiness":
             repository.initialize()
-            assessment = LearningReadinessService(repository).assess(
+            assessment = LearningReadinessService(
+                repository, validator_version=args.validator_version
+            ).assess(
                 args.case_id, horizon_minutes=args.horizon
             )
             print(json.dumps(assessment.to_dict(), sort_keys=True))
         elif args.command == "assess-all":
             repository.initialize()
-            assessments = LearningReadinessService(repository).assess_all(
+            assessments = LearningReadinessService(
+                repository, validator_version=args.validator_version
+            ).assess_all(
                 horizon_minutes=args.horizon
             )
             print(json.dumps({"assessments": len(assessments)}))
@@ -127,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 runtime_version=args.runtime_version,
                 readiness_policy=args.policy,
+                horizon_minutes=args.horizon,
+                validator_version=args.validator_version,
+                label_policy_version=args.label_policy_version,
             )
             print(json.dumps(manifest, sort_keys=True))
         elif args.command == "validate":
@@ -159,8 +166,16 @@ def _parser() -> argparse.ArgumentParser:
     assess = commands.add_parser("assess-readiness")
     assess.add_argument("--case-id", required=True)
     assess.add_argument("--horizon", type=int, default=60)
+    assess.add_argument(
+        "--validator-version",
+        default="learning_readiness_validator_v2",
+    )
     assess_all = commands.add_parser("assess-all")
     assess_all.add_argument("--horizon", type=int, default=60)
+    assess_all.add_argument(
+        "--validator-version",
+        default="learning_readiness_validator_v2",
+    )
     commands.add_parser("readiness-counts")
     explain = commands.add_parser("explain-readiness")
     explain.add_argument("--case-id", required=True)
@@ -169,6 +184,15 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--runtime-version", required=True)
     export.add_argument(
         "--policy", choices=("evaluation", "training"), default="evaluation"
+    )
+    export.add_argument("--horizon", type=int, required=True)
+    export.add_argument(
+        "--validator-version",
+        default="learning_readiness_validator_v2",
+    )
+    export.add_argument(
+        "--label-policy-version",
+        default="objective_outcome_labels_v1",
     )
     commands.add_parser("validate")
     return parser

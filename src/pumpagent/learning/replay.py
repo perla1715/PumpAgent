@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 from typing import Callable, Iterable
 
 from pumpagent.learning.domain import SUPPORTED_HORIZONS_MINUTES
@@ -196,7 +197,10 @@ def _validate_and_select(
 
 def _validate_snapshot_has_no_future_data(snapshot: MarketSnapshot) -> None:
     seen: set[datetime] = set()
+    previous: datetime | None = None
     for candle in snapshot.ohlcv:
+        if not hasattr(candle, "get"):
+            raise ValueError("Replay OHLCV candle must be a mapping.")
         raw_timestamp = candle.get("timestamp")
         if isinstance(raw_timestamp, str):
             timestamp = datetime.fromisoformat(
@@ -214,7 +218,30 @@ def _validate_snapshot_has_no_future_data(snapshot: MarketSnapshot) -> None:
             )
         if timestamp in seen:
             raise ValueError("Replay snapshot contains duplicate OHLCV timestamps.")
+        if previous is not None and timestamp <= previous:
+            raise ValueError(
+                "Replay OHLCV timestamps must be strictly chronological."
+            )
         seen.add(timestamp)
+        previous = timestamp
+        values: dict[str, float] = {}
+        for name in ("open", "high", "low", "close", "volume"):
+            raw_value = candle.get(name)
+            if (
+                isinstance(raw_value, bool)
+                or not isinstance(raw_value, (int, float))
+                or not isfinite(float(raw_value))
+            ):
+                raise ValueError(
+                    f"Replay OHLCV {name} must be a finite number."
+                )
+            values[name] = float(raw_value)
+        if (
+            values["high"] < max(values["open"], values["close"])
+            or values["low"] > min(values["open"], values["close"])
+            or values["high"] < values["low"]
+        ):
+            raise ValueError("Replay OHLCV price relationships are invalid.")
 
 
 def _outcome_observation(snapshot: MarketSnapshot) -> dict[str, object]:

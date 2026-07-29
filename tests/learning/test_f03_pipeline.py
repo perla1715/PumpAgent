@@ -166,6 +166,14 @@ class LearningPersistenceTests(TestCase):
             self.repository.attach_outcome(
                 replace(
                     record,
+                    outcome_id=f"{record.outcome_id}:late-boundary",
+                    observation_end_timestamp=NOW + timedelta(hours=1),
+                )
+            )
+        with self.assertRaises(LearningCaseConflictError):
+            self.repository.attach_outcome(
+                replace(
+                    record,
                     source_data_identity={
                         "symbol": "ETHUSDT",
                         "exchange": "binance",
@@ -411,7 +419,10 @@ class LabelsAndExportTests(TestCase):
     def test_export_is_deterministic_and_excludes_pending_cases(self) -> None:
         output = Path(self.temp.name) / "dataset.jsonl"
         empty = export_jsonl_dataset(
-            self.repository, output, runtime_version="526e72f"
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
         )
         self.assertEqual(empty["case_count"], 0)
         service = OutcomeAttributionService(self.repository)
@@ -424,11 +435,17 @@ class LabelsAndExportTests(TestCase):
             )
         LearningReadinessService(self.repository).assess(self.case.case_id)
         first = export_jsonl_dataset(
-            self.repository, output, runtime_version="526e72f"
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
         )
         content = output.read_text(encoding="utf-8")
         second = export_jsonl_dataset(
-            self.repository, output, runtime_version="526e72f"
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
         )
         self.assertEqual(first, second)
         self.assertEqual(content, output.read_text(encoding="utf-8"))
@@ -509,6 +526,50 @@ class ReplayTests(TestCase):
                         runtime_version="526e72f",
                     ),
                 )
+            self.assertEqual(repository.list_cases(), ())
+
+    def test_replay_rejects_out_of_order_and_non_finite_ohlcv(self) -> None:
+        with TemporaryDirectory() as directory:
+            repository = SQLiteLearningCaseRepository(
+                Path(directory) / "learning.sqlite3"
+            )
+            repository.initialize()
+            first = dict(make_snapshot().ohlcv[0])
+            second = dict(make_snapshot().ohlcv[1])
+            first["timestamp"] = NOW
+            second["timestamp"] = NOW - timedelta(minutes=1)
+            invalid_values = (
+                ("out-of-order", (first, second)),
+                (
+                    "nan",
+                    ({**first, "close": float("nan")},),
+                ),
+                (
+                    "positive infinity",
+                    ({**first, "close": float("inf")},),
+                ),
+                (
+                    "negative infinity",
+                    ({**first, "close": float("-inf")},),
+                ),
+            )
+            for label, candles in invalid_values:
+                with self.subTest(label=label), self.assertRaises(ValueError):
+                    HistoricalReplayRunner(repository).run(
+                        (
+                            replace(
+                                make_snapshot(),
+                                timestamp=NOW,
+                                ohlcv=candles,
+                            ),
+                        ),
+                        ReplayConfig(
+                            symbol="BTCUSDT",
+                            exchange="binance",
+                            timeframe="1m",
+                            runtime_version="526e72f",
+                        ),
+                    )
             self.assertEqual(repository.list_cases(), ())
 
     def test_replay_outcome_completion_is_scoped_to_current_run_cases(

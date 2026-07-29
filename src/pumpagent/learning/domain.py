@@ -22,7 +22,7 @@ OUTCOME_RECORD_SCHEMA_VERSION = "outcome_record_v1"
 OUTCOME_COMPUTATION_VERSION = "outcome_metrics_v1"
 REVIEW_RECORD_SCHEMA_VERSION = "learning_review_v1"
 READINESS_ASSESSMENT_SCHEMA_VERSION = "learning_readiness_assessment_v1"
-READINESS_VALIDATOR_VERSION = "learning_readiness_validator_v1"
+READINESS_VALIDATOR_VERSION = "learning_readiness_validator_v2"
 SUPPORTED_HORIZONS_MINUTES = (5, 15, 30, 60)
 
 

@@ -94,7 +94,9 @@ are not persisted as completed cases.
 - `INSUFFICIENT_OUTCOME`.
 
 Thresholds are explicit `LabelPolicyConfig` values. Labels are research data,
-not Runtime decisions.
+not Runtime decisions. Deterministic precedence is pump failure, dump recovery,
+positive continuation, negative continuation, then range/control; incomplete
+input produces `INSUFFICIENT_OUTCOME`.
 
 ## Learning readiness quality gate
 
@@ -107,7 +109,8 @@ Its technical status is one of:
 - `INVALID`: stored identities, digests, canonical content, or provenance are
   inconsistent or corrupt.
 
-The `learning_readiness_validator_v1` checks the completed canonical
+The active and supported validator registry contains
+`learning_readiness_validator_v2`. It checks the completed canonical
 RuntimeEvent, required sections, cross-section event/Episode/market identities,
 F-02 timestamp invariants, canonical digest, finite numeric values, supported
 schemas and Runtime version, replay or ingestion provenance, repository
@@ -127,14 +130,32 @@ OutcomeRecord, Runtime schema, outcome computation version, label policy,
 validator version, review state, and exclusion state. Repeating identical input
 is idempotent. A relevant version, authoritative outcome, review, or exclusion
 change creates a new immutable assessment while preserving history. The latest
-assessment by timestamp and identity is authoritative after restart.
+assessment matching the current dependency fingerprint is selected by
+assessment timestamp and canonical assessment ID. SQLite insertion order and
+`rowid` have no semantic role.
+
+The dependency fingerprint binds case and RuntimeEvent identity, current case
+digest, authoritative outcome ID and horizon, outcome computation version,
+label policy, validator version, review state, manual exclusion, and
+administrative block. F-03.1 `learning_readiness_validator_v1` records remain
+immutable audit history but are not authoritative under the v2 registry.
+
+`LearningReadinessService` derives claims, but the repository independently
+recomputes them from current stored facts before insertion. Public constructors
+and public identity builders therefore cannot certify readiness. Dataset
+authorization again derives current facts and requires an exact authenticated,
+fresh assessment.
 
 ## Dataset export
 
-JSONL export requires a named readiness policy and never infers readiness from
+JSONL export requires a named readiness policy and explicit outcome horizon.
+It never infers readiness from
 case or outcome status. Cases without an authoritative assessment, cases with
 `NOT_READY`/`INVALID` status, manual exclusions, and training cases without an
 allowed review status are omitted with deterministic manifest reasons.
+Wrong horizons, unsupported validators or label policies, stale case digests,
+stale outcomes, and unauthenticated assessments are also excluded with stable
+machine-readable reason codes.
 
 Rows are ordered by cycle timestamp and case ID. Each row includes the
 canonical Runtime event, Scenario Probability, Confidence, Decision, outcomes,
@@ -165,11 +186,19 @@ PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
   explain-readiness --case-id case-agent-cycle-id
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 export \
-  --output dataset.jsonl --runtime-version 526e72f --policy evaluation
+  --output dataset.jsonl --runtime-version 526e72f --policy evaluation \
+  --horizon 60
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 validate
 ```
 
 Invalid configuration or corrupted storage returns a non-zero exit status.
+
+Replay admission validates embedded candles before Runtime invocation:
+timestamps must be aware, unique, chronological, and no later than the
+snapshot; OHLCV values must be numeric, finite, and internally coherent.
+Outcome persistence independently authenticates source identity and enforces
+post-cycle boundaries no later than the declared horizon, with complete
+outcomes ending exactly at that horizon.
 
 ## Current limitations
 

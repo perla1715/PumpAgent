@@ -13,6 +13,7 @@ from pumpagent.learning.domain import (
     DatasetEligibility,
     LearningReadinessStatus,
     ReviewRecord,
+    build_readiness_assessment_id,
 )
 from pumpagent.learning.cli import main as cli_main
 from pumpagent.learning.export import export_jsonl_dataset
@@ -77,12 +78,66 @@ class LearningReadinessTests(TestCase):
         with self.assertRaisesRegex(ValueError, "Non-canonical"):
             replace(first, assessment_id="forged-readiness-id")
 
+    def test_coherent_public_forgery_is_rejected_by_repository(self) -> None:
+        self._attach_outcome()
+        authentic = LearningReadinessService(self.repository).assess(
+            self.case.case_id
+        )
+        forged_outcome_id = "nonexistent-outcome"
+        forged_id = build_readiness_assessment_id(
+            case_id=authentic.case_id,
+            runtime_event_id=authentic.runtime_event_id,
+            validator_version=authentic.validator_version,
+            canonical_payload_digest=authentic.canonical_payload_digest,
+            outcome_record_id=forged_outcome_id,
+            label_policy_version=authentic.label_policy_version,
+            review_status=authentic.review_status,
+            manually_excluded=authentic.manually_excluded,
+            administratively_blocked=authentic.administratively_blocked,
+            provenance=authentic.provenance,
+        )
+        forged = replace(
+            authentic,
+            assessment_id=forged_id,
+            outcome_record_id=forged_outcome_id,
+        )
+        with self.assertRaisesRegex(
+            LearningCaseConflictError, "does not authenticate"
+        ):
+            self.repository.store_readiness_assessment(forged)
+        self.assertEqual(
+            self.repository.list_readiness_assessments(self.case.case_id),
+            (authentic,),
+        )
+        unsupported_id = build_readiness_assessment_id(
+            case_id=authentic.case_id,
+            runtime_event_id=authentic.runtime_event_id,
+            validator_version="unsupported-validator",
+            canonical_payload_digest=authentic.canonical_payload_digest,
+            outcome_record_id=authentic.outcome_record_id,
+            label_policy_version=authentic.label_policy_version,
+            review_status=authentic.review_status,
+            manually_excluded=authentic.manually_excluded,
+            administratively_blocked=authentic.administratively_blocked,
+            provenance=authentic.provenance,
+        )
+        unsupported = replace(
+            authentic,
+            assessment_id=unsupported_id,
+            assessment_version="unsupported-validator",
+            validator_version="unsupported-validator",
+        )
+        with self.assertRaisesRegex(
+            LearningCaseConflictError, "Unsupported"
+        ):
+            self.repository.store_readiness_assessment(unsupported)
+
     def test_missing_and_incomplete_outcomes_are_not_ready(self) -> None:
         missing = LearningReadinessService(self.repository).assess(
             self.case.case_id
         )
         self.assertIs(
-            missing.readiness_status, LearningReadinessStatus.NOT_READY
+            missing.readiness_status, LearningReadinessStatus.PENDING
         )
         self._attach_outcome(minutes=59)
         incomplete = LearningReadinessService(self.repository).assess(
@@ -92,24 +147,24 @@ class LearningReadinessTests(TestCase):
             incomplete.readiness_status, LearningReadinessStatus.NOT_READY
         )
 
-    def test_changed_validator_creates_immutable_history_and_survives_restart(
+    def test_unsupported_validator_is_rejected_and_history_survives_restart(
         self,
     ) -> None:
         self._attach_outcome()
-        first = LearningReadinessService(
-            self.repository, validator_version="validator-v1"
-        ).assess(self.case.case_id)
-        second = LearningReadinessService(
-            self.repository, validator_version="validator-v2"
-        ).assess(self.case.case_id)
+        first = LearningReadinessService(self.repository).assess(
+            self.case.case_id
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            LearningReadinessService(
+                self.repository, validator_version="unsupported-validator"
+            ).assess(self.case.case_id)
         reopened = SQLiteLearningCaseRepository(self.path)
 
-        self.assertNotEqual(first.assessment_id, second.assessment_id)
         self.assertEqual(
-            reopened.latest_readiness_assessment(self.case.case_id), second
+            reopened.latest_readiness_assessment(self.case.case_id), first
         )
         self.assertEqual(
-            len(reopened.list_readiness_assessments(self.case.case_id)), 2
+            len(reopened.list_readiness_assessments(self.case.case_id)), 1
         )
         with self.assertRaises(LearningCaseConflictError):
             reopened.store_readiness_assessment(
@@ -166,7 +221,10 @@ class LearningReadinessTests(TestCase):
         self._attach_outcome()
         output = Path(self.temp.name) / "dataset.jsonl"
         missing = export_jsonl_dataset(
-            self.repository, output, runtime_version="526e72f"
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
         )
         self.assertEqual(missing["case_count"], 0)
         self.assertEqual(
@@ -178,19 +236,119 @@ class LearningReadinessTests(TestCase):
             self.repository,
             output,
             runtime_version="526e72f",
+            horizon_minutes=60,
             readiness_policy="evaluation",
         )
         training = export_jsonl_dataset(
             self.repository,
             output,
             runtime_version="526e72f",
+            horizon_minutes=60,
             readiness_policy="training",
         )
         self.assertEqual(evaluation["case_count"], 1)
         self.assertEqual(training["case_count"], 0)
         self.assertEqual(
             training["exclusions_by_reason"],
-            {"training_review_not_approved": 1},
+            {"review_not_approved": 1},
+        )
+
+    def test_stale_digest_and_wrong_horizon_cannot_authorize_export(
+        self,
+    ) -> None:
+        self._attach_outcome()
+        LearningReadinessService(self.repository).assess(self.case.case_id)
+        self.repository.record_review(
+            ReviewRecord(
+                review_id="review:stale",
+                case_id=self.case.case_id,
+                review_status="approved",
+                annotation="Changes current review dependency.",
+                tags=("reviewed",),
+                reviewed_by="reviewer",
+                reviewed_at=NOW + timedelta(hours=2),
+            )
+        )
+        output = Path(self.temp.name) / "stale.jsonl"
+        stale = export_jsonl_dataset(
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
+        )
+        wrong_horizon = export_jsonl_dataset(
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=15,
+        )
+        self.assertEqual(stale["case_count"], 0)
+        self.assertEqual(
+            stale["exclusions_by_reason"], {"stale_case_digest": 1}
+        )
+        self.assertEqual(wrong_horizon["case_count"], 0)
+        self.assertEqual(
+            wrong_horizon["exclusions_by_reason"], {"horizon_mismatch": 1}
+        )
+
+    def test_unsupported_validator_and_label_policy_cannot_authorize(
+        self,
+    ) -> None:
+        self._attach_outcome()
+        LearningReadinessService(self.repository).assess(self.case.case_id)
+        output = Path(self.temp.name) / "unsupported.jsonl"
+        unsupported_validator = export_jsonl_dataset(
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
+            validator_version="unsupported-validator",
+        )
+        unsupported_label = export_jsonl_dataset(
+            self.repository,
+            output,
+            runtime_version="526e72f",
+            horizon_minutes=60,
+            label_policy_version="unsupported-label-policy",
+        )
+        self.assertEqual(
+            unsupported_validator["exclusions_by_reason"],
+            {"unsupported_validator": 1},
+        )
+        self.assertEqual(
+            unsupported_label["exclusions_by_reason"],
+            {"label_policy_mismatch": 1},
+        )
+
+    def test_later_authoritative_outcome_makes_old_assessment_stale(self) -> None:
+        service = OutcomeAttributionService(self.repository)
+        service.attribute(
+            self.case,
+            future_observations(minutes=59),
+            horizon_minutes=60,
+            creation_timestamp=NOW + timedelta(minutes=59),
+        )
+        old = LearningReadinessService(self.repository).assess(
+            self.case.case_id
+        )
+        self.assertIs(
+            old.readiness_status, LearningReadinessStatus.NOT_READY
+        )
+        service.attribute(
+            self.case,
+            future_observations(minutes=60),
+            horizon_minutes=60,
+            creation_timestamp=NOW + timedelta(minutes=60),
+        )
+        manifest = export_jsonl_dataset(
+            self.repository,
+            Path(self.temp.name) / "stale-outcome.jsonl",
+            runtime_version="526e72f",
+            horizon_minutes=60,
+        )
+        self.assertEqual(manifest["case_count"], 0)
+        self.assertEqual(
+            manifest["exclusions_by_reason"], {"stale_outcome": 1}
         )
 
     def test_human_approval_creates_new_training_eligible_assessment(
@@ -260,7 +418,7 @@ class LearningReadinessTests(TestCase):
             ready.readiness_status, LearningReadinessStatus.LEARNING_READY
         )
         self.assertIs(
-            not_ready.readiness_status, LearningReadinessStatus.NOT_READY
+            not_ready.readiness_status, LearningReadinessStatus.PENDING
         )
         self.assertEqual(
             self.repository.list_cases_by_readiness_status(
@@ -311,6 +469,8 @@ class LearningReadinessTests(TestCase):
                     "526e72f",
                     "--policy",
                     "evaluation",
+                    "--horizon",
+                    "60",
                 ]
             ),
             0,

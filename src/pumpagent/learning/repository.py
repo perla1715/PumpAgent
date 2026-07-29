@@ -6,7 +6,8 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
+from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
@@ -54,7 +55,7 @@ class LearningCaseRepository(Protocol):
 
 
 class SQLiteLearningCaseRepository:
-    """Durable idempotent SQLite implementation with immutable payloads."""
+    """Durable store that authenticates outcomes and readiness at write time."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -162,6 +163,28 @@ class SQLiteLearningCaseRepository:
                     raise LearningCaseConflictError(
                         "Outcome market identity conflicts with its case."
                     )
+                _validate_outcome_boundary(case, outcome)
+                if (
+                    outcome.completeness_status
+                    is CompletenessStatus.COMPLETE
+                ):
+                    authoritative = connection.execute(
+                        "SELECT outcome_id FROM outcome_records "
+                        "WHERE source_case_id = ? AND horizon_minutes = ? "
+                        "AND completeness_status = ?",
+                        (
+                            outcome.source_case_id,
+                            outcome.horizon_minutes,
+                            CompletenessStatus.COMPLETE.value,
+                        ),
+                    ).fetchone()
+                    if (
+                        authoritative is not None
+                        and authoritative[0] != outcome.outcome_id
+                    ):
+                        raise LearningCaseConflictError(
+                            "Conflicting complete authoritative outcome."
+                        )
                 existing = connection.execute(
                     "SELECT payload_digest FROM outcome_records "
                     "WHERE outcome_id = ?",
@@ -287,7 +310,7 @@ class SQLiteLearningCaseRepository:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM review_records WHERE case_id = ? "
-                "ORDER BY reviewed_at DESC, rowid DESC LIMIT 1",
+                "ORDER BY reviewed_at DESC, review_id DESC LIMIT 1",
                 (case_id,),
             ).fetchone()
         return None if row is None else _review_from_dict(json.loads(row[0]))
@@ -307,6 +330,34 @@ class SQLiteLearningCaseRepository:
                 if case.runtime_event_id != assessment.runtime_event_id:
                     raise LearningCaseConflictError(
                         "Readiness Runtime event identity conflicts with its case."
+                    )
+                from pumpagent.learning.readiness import (
+                    LearningReadinessService,
+                    SUPPORTED_READINESS_VALIDATORS,
+                )
+
+                if (
+                    assessment.validator_version
+                    not in SUPPORTED_READINESS_VALIDATORS
+                ):
+                    raise LearningCaseConflictError(
+                        "Unsupported readiness validator."
+                    )
+                if assessment.evaluated_outcome_horizon is None:
+                    raise LearningCaseConflictError(
+                        "Authoritative readiness requires an explicit horizon."
+                    )
+                expected = LearningReadinessService(
+                    self,
+                    validator_version=assessment.validator_version,
+                ).derive_assessment(
+                    assessment.case_id,
+                    horizon_minutes=assessment.evaluated_outcome_horizon,
+                )
+                if assessment != expected:
+                    raise LearningCaseConflictError(
+                        "Readiness assessment does not authenticate against "
+                        "current repository facts."
                     )
                 existing = connection.execute(
                     "SELECT payload, payload_digest FROM readiness_assessments "
@@ -345,7 +396,7 @@ class SQLiteLearningCaseRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM readiness_assessments WHERE case_id = ? "
-                "ORDER BY assessment_timestamp, rowid",
+                "ORDER BY assessment_timestamp, assessment_id",
                 (case_id,),
             ).fetchall()
         return tuple(_readiness_from_dict(json.loads(row[0])) for row in rows)
@@ -353,6 +404,7 @@ class SQLiteLearningCaseRepository:
     def latest_readiness_assessment(
         self, case_id: str
     ) -> LearningReadinessAssessment | None:
+        """Return deterministic latest audit record, not export authority."""
         assessments = self.list_readiness_assessments(case_id)
         return assessments[-1] if assessments else None
 
@@ -369,7 +421,7 @@ class SQLiteLearningCaseRepository:
                     SELECT ra2.assessment_id FROM readiness_assessments ra2
                     WHERE ra2.case_id = lc.case_id
                     ORDER BY ra2.assessment_timestamp DESC,
-                             ra2.rowid DESC LIMIT 1
+                             ra2.assessment_id DESC LIMIT 1
                 ) AND ra.readiness_status = ?
                 ORDER BY lc.cycle_timestamp, lc.case_id
                 """,
@@ -522,6 +574,59 @@ def _outcome_rank(record: OutcomeRecord) -> tuple[int, datetime, str]:
     }[record.completeness_status]
     boundary = record.observation_end_timestamp or record.source_cycle_timestamp
     return completeness, boundary, record.outcome_id
+
+
+def _validate_outcome_boundary(
+    case: LearningCase, outcome: OutcomeRecord
+) -> None:
+    start = outcome.observation_start_timestamp
+    end = outcome.observation_end_timestamp
+    boundary = case.cycle_timestamp + timedelta(
+        minutes=outcome.horizon_minutes
+    )
+    if outcome.completeness_status is CompletenessStatus.UNAVAILABLE:
+        if start is not None or end is not None:
+            raise LearningCaseConflictError(
+                "Unavailable outcome cannot contain observation boundaries."
+            )
+    else:
+        if start is None or end is None:
+            raise LearningCaseConflictError(
+                "Observed outcome requires start and end boundaries."
+            )
+        if start <= case.cycle_timestamp:
+            raise LearningCaseConflictError(
+                "Outcome start must be strictly after its source cycle."
+            )
+        if end < start:
+            raise LearningCaseConflictError(
+                "Outcome end cannot precede its start."
+            )
+        if end > boundary:
+            raise LearningCaseConflictError(
+                "Outcome end exceeds its declared horizon."
+            )
+        if (
+            outcome.completeness_status is CompletenessStatus.COMPLETE
+            and end != boundary
+        ):
+            raise LearningCaseConflictError(
+                "Complete outcome must end at its exact horizon."
+            )
+    for name in (
+        "close_to_close_return",
+        "maximum_favorable_excursion",
+        "maximum_adverse_excursion",
+        "maximum_high_return",
+        "minimum_low_return",
+        "realized_volatility",
+        "volume_change",
+    ):
+        value = getattr(outcome, name)
+        if value is not None and not isfinite(value):
+            raise LearningCaseConflictError(
+                f"Outcome {name} must be finite."
+            )
 
 
 def _digest(payload: str) -> str:

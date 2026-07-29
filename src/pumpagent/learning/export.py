@@ -1,4 +1,4 @@
-"""Deterministic JSONL learning dataset export."""
+"""Deterministic JSONL export through authenticated readiness authorization."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from typing import Any
 from pumpagent.learning.domain import LEARNING_CASE_SCHEMA_VERSION
 from pumpagent.learning.labels import LABEL_POLICY_VERSION, label_outcome
 from pumpagent.learning.repository import SQLiteLearningCaseRepository
-from pumpagent.learning.readiness import READINESS_POLICIES, policy_allows
+from pumpagent.learning.readiness import (
+    ACTIVE_READINESS_VALIDATOR,
+    READINESS_POLICIES,
+    authorize_case_for_export,
+)
 from pumpagent.runtime.domain.base import to_primitive
 
 
@@ -24,20 +28,29 @@ def export_jsonl_dataset(
     output_path: str | Path,
     *,
     runtime_version: str,
+    horizon_minutes: int,
     readiness_policy: str = "evaluation",
+    validator_version: str = ACTIVE_READINESS_VALIDATOR,
+    label_policy_version: str = LABEL_POLICY_VERSION,
 ) -> dict[str, Any]:
     if readiness_policy not in READINESS_POLICIES:
         raise ValueError(f"Unknown readiness policy: {readiness_policy}")
     all_cases = repository.list_cases()
-    assessments = {
-        case.case_id: repository.latest_readiness_assessment(case.case_id)
+    authorizations = {
+        case.case_id: authorize_case_for_export(
+            repository,
+            case.case_id,
+            policy_name=readiness_policy,
+            horizon_minutes=horizon_minutes,
+            validator_version=validator_version,
+            label_policy_version=label_policy_version,
+        )
         for case in all_cases
     }
     cases = tuple(
         case
         for case in all_cases
-        if assessments[case.case_id] is not None
-        and policy_allows(assessments[case.case_id], readiness_policy)  # type: ignore[arg-type]
+        if authorizations[case.case_id].authorized
     )
     rows: list[dict[str, Any]] = []
     horizons: set[int] = set()
@@ -45,10 +58,19 @@ def export_jsonl_dataset(
     outcome_schema_versions: set[str] = set()
     runtime_schema_versions: set[str] = set()
     for case in cases:
-        outcomes = repository.list_outcomes(case.case_id)
-        horizons.update(item.horizon_minutes for item in outcomes)
-        outcome_versions.update(item.computation_version for item in outcomes)
-        outcome_schema_versions.update(item.schema_version for item in outcomes)
+        authorization = authorizations[case.case_id]
+        assessment = authorization.assessment
+        outcome = authorization.outcome
+        assert assessment is not None and outcome is not None
+        stored_runtime_version = case.provenance.get("runtime_version")
+        if stored_runtime_version != runtime_version:
+            raise ValueError(
+                "Export Runtime version does not match case provenance."
+            )
+        outcomes = (outcome,)
+        horizons.add(outcome.horizon_minutes)
+        outcome_versions.add(outcome.computation_version)
+        outcome_schema_versions.add(outcome.schema_version)
         runtime_schema_versions.add(case.runtime_event_schema_version)
         rows.append(
             {
@@ -66,7 +88,7 @@ def export_jsonl_dataset(
                 ),
                 "outcomes": [item.to_dict() for item in outcomes],
                 "labels": [label_outcome(item).__dict__ for item in outcomes],
-                "review_status": case.learning_metadata.review_status.value,
+                "review_status": assessment.review_status,
                 "schema_versions": {
                     "learning_case": case.schema_version,
                     "runtime_event": case.runtime_event_schema_version,
@@ -74,15 +96,28 @@ def export_jsonl_dataset(
                         outcomes[0].schema_version if outcomes else None
                     ),
                 },
-                "runtime_version": runtime_version,
+                "runtime_version": stored_runtime_version,
                 "label_policy_version": LABEL_POLICY_VERSION,
                 "outcome_computation_versions": sorted(
                     {item.computation_version for item in outcomes}
                 ),
-                "readiness_assessment_id": assessments[
-                    case.case_id
-                ].assessment_id,
+                "readiness_assessment_id": assessment.assessment_id,
+                "readiness_validator_version": assessment.validator_version,
+                "readiness_horizon_minutes": (
+                    assessment.evaluated_outcome_horizon
+                ),
+                "canonical_payload_digest": (
+                    assessment.canonical_payload_digest
+                ),
+                "readiness_dependency_fingerprint": (
+                    assessment.provenance["dependency_fingerprint"]
+                ),
+                "authoritative_outcome_id": outcome.outcome_id,
+                "authoritative_outcome_computation_version": (
+                    outcome.computation_version
+                ),
                 "readiness_policy": readiness_policy,
+                "authorization_version": "dataset_authorization_v1",
             }
         )
     rows.sort(key=lambda item: (item["cycle_timestamp"], item["case_id"]))
@@ -93,21 +128,7 @@ def export_jsonl_dataset(
     for case in all_cases:
         if case in cases:
             continue
-        assessment = assessments[case.case_id]
-        if assessment is None:
-            exclusions["missing_readiness_assessment"] += 1
-        elif assessment.manually_excluded:
-            exclusions["manually_excluded"] += 1
-        elif assessment.administratively_blocked:
-            exclusions["administratively_blocked"] += 1
-        elif not assessment.technically_ready:
-            exclusions[
-                f"readiness_{assessment.readiness_status.value}"
-            ] += 1
-        elif readiness_policy == "training":
-            exclusions["training_review_not_approved"] += 1
-        else:
-            exclusions["readiness_policy_rejected"] += 1
+        exclusions[authorizations[case.case_id].reason_code] += 1
     timestamps = [case.cycle_timestamp for case in cases]
     created_at = (
         max(case.ingestion_timestamp for case in cases)
@@ -133,8 +154,10 @@ def export_jsonl_dataset(
             "runtime_events": sorted(runtime_schema_versions),
             "outcomes": sorted(outcome_schema_versions),
         },
-        "label_policy": LABEL_POLICY_VERSION,
+        "label_policy": label_policy_version,
         "readiness_policy": readiness_policy,
+        "readiness_validator_version": validator_version,
+        "readiness_horizon_minutes": horizon_minutes,
         "outcome_horizons": sorted(horizons),
         "outcome_computation_versions": sorted(outcome_versions),
         "included_case_ids": [row["case_id"] for row in rows],

@@ -1,4 +1,4 @@
-"""Deterministic, persisted learning-readiness quality gate."""
+"""Trusted derivation, persistence authentication, and dataset authorization."""
 
 from __future__ import annotations
 
@@ -51,6 +51,22 @@ READINESS_POLICIES = {
     EVALUATION_POLICY.name: EVALUATION_POLICY,
     TRAINING_POLICY.name: TRAINING_POLICY,
 }
+SUPPORTED_READINESS_VALIDATORS = frozenset({READINESS_VALIDATOR_VERSION})
+ACTIVE_READINESS_VALIDATOR = READINESS_VALIDATOR_VERSION
+SUPPORTED_RUNTIME_VERSIONS = frozenset(
+    {
+        "526e72f",
+        "526e72f1e926f82e220e197d62205ab0f625a39a",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExportAuthorization:
+    authorized: bool
+    reason_code: str
+    assessment: LearningReadinessAssessment | None
+    outcome: OutcomeRecord | None
 
 
 class LearningReadinessService:
@@ -68,6 +84,18 @@ class LearningReadinessService:
     def assess(
         self, case_id: str, *, horizon_minutes: int = 60
     ) -> LearningReadinessAssessment:
+        assessment = self.derive_assessment(
+            case_id, horizon_minutes=horizon_minutes
+        )
+        return self.repository.store_readiness_assessment(assessment)
+
+    def derive_assessment(
+        self, case_id: str, *, horizon_minutes: int = 60
+    ) -> LearningReadinessAssessment:
+        if self.validator_version not in SUPPORTED_READINESS_VALIDATORS:
+            raise ValueError(
+                f"Unsupported readiness validator: {self.validator_version}"
+            )
         case = self.repository.get_case(case_id)
         if case is None:
             raise ValueError("LearningCase does not exist.")
@@ -204,15 +232,28 @@ class LearningReadinessService:
             for reason in case.exclusion_reasons
         )
         administratively_blocked = (
-            case.case_status.value == "excluded"
-            or case.dataset_eligibility.value == "excluded"
-            or bool(case.exclusion_reasons)
+            not manually_excluded
+            and (
+                case.case_status.value == "excluded"
+                or case.dataset_eligibility.value == "excluded"
+                or bool(case.exclusion_reasons)
+            )
         )
         if manually_excluded:
             warnings.append("Case is manually or administratively excluded.")
 
+        dependencies_pending = (
+            outcome is None
+            or (
+                outcome is not None
+                and outcome.completeness_status
+                is CompletenessStatus.UNAVAILABLE
+            )
+        )
         if invalid:
             status = LearningReadinessStatus.INVALID
+        elif dependencies_pending:
+            status = LearningReadinessStatus.PENDING
         elif not_ready:
             status = LearningReadinessStatus.NOT_READY
         else:
@@ -244,6 +285,25 @@ class LearningReadinessService:
             ),
             "source_replay_or_ingestion": dict(case.provenance),
         }
+        assessment_provenance["dependency_fingerprint"] = _digest(
+            _canonical_json(
+                {
+                    "case_id": case.case_id,
+                    "runtime_event_id": case.runtime_event_id,
+                    "canonical_payload_digest": recomputed_digest,
+                    "outcome_record_id": outcome_id,
+                    "outcome_horizon": horizon_minutes,
+                    "outcome_computation_version": (
+                        outcome.computation_version if outcome else None
+                    ),
+                    "label_policy_version": LABEL_POLICY_VERSION,
+                    "validator_version": self.validator_version,
+                    "review_status": review_status,
+                    "manually_excluded": manually_excluded,
+                    "administratively_blocked": administratively_blocked,
+                }
+            )
+        )
         assessment_id = build_readiness_assessment_id(
             case_id=case.case_id,
             runtime_event_id=case.runtime_event_id,
@@ -279,7 +339,7 @@ class LearningReadinessService:
             administratively_blocked=administratively_blocked,
             provenance=assessment_provenance,
         )
-        return self.repository.store_readiness_assessment(assessment)
+        return assessment
 
     def assess_all(
         self, *, horizon_minutes: int = 60
@@ -290,14 +350,122 @@ class LearningReadinessService:
         )
 
 
-def policy_allows(
-    assessment: LearningReadinessAssessment, policy_name: str
-) -> bool:
+def authorize_case_for_export(
+    repository: SQLiteLearningCaseRepository,
+    case_id: str,
+    *,
+    policy_name: str,
+    horizon_minutes: int,
+    validator_version: str = ACTIVE_READINESS_VALIDATOR,
+    label_policy_version: str = LABEL_POLICY_VERSION,
+) -> ExportAuthorization:
     if policy_name not in READINESS_POLICIES:
         raise ValueError(f"Unknown readiness policy: {policy_name}")
-    if policy_name == "evaluation":
-        return assessment.approved_for_evaluation
-    return assessment.approved_for_training
+    if validator_version not in SUPPORTED_READINESS_VALIDATORS:
+        return ExportAuthorization(False, "unsupported_validator", None, None)
+    if label_policy_version != LABEL_POLICY_VERSION:
+        return ExportAuthorization(False, "label_policy_mismatch", None, None)
+    case = repository.get_case(case_id)
+    if case is None:
+        return ExportAuthorization(False, "invalid_case", None, None)
+    assessments = repository.list_readiness_assessments(case_id)
+    if not assessments:
+        return ExportAuthorization(
+            False, "missing_readiness_assessment", None, None
+        )
+    horizon_candidates = tuple(
+        item
+        for item in assessments
+        if item.evaluated_outcome_horizon == horizon_minutes
+    )
+    if not horizon_candidates:
+        return ExportAuthorization(False, "horizon_mismatch", None, None)
+    validator_candidates = tuple(
+        item
+        for item in horizon_candidates
+        if item.validator_version == validator_version
+    )
+    if not validator_candidates:
+        return ExportAuthorization(False, "unsupported_validator", None, None)
+    label_candidates = tuple(
+        item
+        for item in validator_candidates
+        if item.label_policy_version == label_policy_version
+    )
+    if not label_candidates:
+        return ExportAuthorization(False, "label_policy_mismatch", None, None)
+    outcomes = repository.list_outcomes(case_id)
+    outcome = next(
+        (
+            item
+            for item in outcomes
+            if item.horizon_minutes == horizon_minutes
+        ),
+        None,
+    )
+    current_digest = repository.case_payload_digest(case_id)
+    outcome_candidates = tuple(
+        item
+        for item in label_candidates
+        if item.outcome_record_id
+        == (outcome.outcome_id if outcome is not None else None)
+    )
+    if not outcome_candidates:
+        return ExportAuthorization(
+            False, "stale_outcome", None, outcome
+        )
+    current_candidates = tuple(
+        item
+        for item in outcome_candidates
+        if item.canonical_payload_digest == current_digest
+    )
+    if not current_candidates:
+        return ExportAuthorization(
+            False, "stale_case_digest", None, outcome
+        )
+    candidate = sorted(
+        current_candidates,
+        key=lambda item: (item.assessment_timestamp, item.assessment_id),
+        reverse=True,
+    )[0]
+    try:
+        expected = LearningReadinessService(
+            repository, validator_version=validator_version
+        ).derive_assessment(case_id, horizon_minutes=horizon_minutes)
+    except (TypeError, ValueError):
+        return ExportAuthorization(False, "invalid_case", candidate, outcome)
+    if candidate != expected:
+        return ExportAuthorization(
+            False, "forged_readiness_assessment", candidate, outcome
+        )
+    if not candidate.technically_ready:
+        return ExportAuthorization(
+            False,
+            (
+                "invalid_case"
+                if candidate.readiness_status is LearningReadinessStatus.INVALID
+                else "technical_not_ready"
+            ),
+            candidate,
+            outcome,
+        )
+    if candidate.manually_excluded:
+        return ExportAuthorization(
+            False, "manual_exclusion", candidate, outcome
+        )
+    if candidate.administratively_blocked:
+        return ExportAuthorization(
+            False, "administrative_block", candidate, outcome
+        )
+    if policy_name == "training" and not candidate.approved_for_training:
+        return ExportAuthorization(
+            False, "review_not_approved", candidate, outcome
+        )
+    if policy_name == "evaluation" and not candidate.approved_for_evaluation:
+        return ExportAuthorization(
+            False, "review_not_approved", candidate, outcome
+        )
+    return ExportAuthorization(True, "authorized", candidate, outcome)
 
 
 def _runtime_payload_errors(case: LearningCase) -> tuple[str, ...]:
@@ -492,7 +660,7 @@ def _provenance_complete(case: LearningCase) -> bool:
         or provenance.get("replay_source")
         or provenance.get("ingestion_source")
     )
-    return bool(runtime_version and runtime_version != "unknown" and source)
+    return bool(runtime_version in SUPPORTED_RUNTIME_VERSIONS and source)
 
 
 def _all_finite(value: object) -> bool:
