@@ -221,6 +221,10 @@ def _validate_completed_identity(event: RuntimeEvent) -> None:
         raise ValueError("RuntimeEvent MarketSnapshot market identity must match.")
     if snapshot.timestamp != event.cycle_timestamp:
         raise ValueError("RuntimeEvent MarketSnapshot timestamp must match the cycle.")
+    if observation.observation_timestamp != event.cycle_timestamp:
+        raise ValueError(
+            "RuntimeEvent ObservationPackage timestamp must match the cycle."
+        )
     for name, section in (
         ("ObservationPackage", observation),
         ("StructuralEvidence", structure),
@@ -240,6 +244,8 @@ def _validate_completed_identity(event: RuntimeEvent) -> None:
         or process.episode_id != episode_id
     ):
         raise ValueError("RuntimeEvent ProcessEvidence identity must match.")
+    if process.observation_timestamp != event.cycle_timestamp:
+        raise ValueError("RuntimeEvent ProcessEvidence timestamp must match the cycle.")
     if (
         process.symbol != event.symbol
         or process.exchange != event.exchange
@@ -251,6 +257,13 @@ def _validate_completed_identity(event: RuntimeEvent) -> None:
         or quality.episode_id != episode_id
     ):
         raise ValueError("RuntimeEvent ProcessQualityAssessment identity must match.")
+    if (
+        quality.current_observation.observation_timestamp
+        != event.cycle_timestamp
+    ):
+        raise ValueError(
+            "RuntimeEvent ProcessQualityAssessment timestamp must match the cycle."
+        )
     if hypothesis.episode_id != episode_id:
         raise ValueError("RuntimeEvent HypothesisPackage Episode identity must match.")
     if (
@@ -263,6 +276,13 @@ def _validate_completed_identity(event: RuntimeEvent) -> None:
         != quality.assessment_id
     ):
         raise ValueError("RuntimeEvent ScenarioProbability provenance must match.")
+    if (
+        scenario.observation_timestamp != event.cycle_timestamp
+        or scenario.created_at != event.cycle_timestamp
+    ):
+        raise ValueError(
+            "RuntimeEvent ScenarioProbability timestamps must match the cycle."
+        )
     if (
         confidence.episode_id != episode_id
         or confidence.source_hypothesis_id != hypothesis.hypothesis_id
@@ -281,6 +301,10 @@ def _validate_completed_identity(event: RuntimeEvent) -> None:
         != f"confidence:{episode_id}:{event_id}"
     ):
         raise ValueError("RuntimeEvent DecisionAssessment provenance must match.")
+    if decision.created_at != event.cycle_timestamp:
+        raise ValueError(
+            "RuntimeEvent DecisionAssessment timestamp must match the cycle."
+        )
     if (
         event.decision_alert is not None
         and event.decision_alert.event_id != event_id
@@ -303,6 +327,20 @@ def _validate_quality_continuity(event: RuntimeEvent) -> None:
         )
     if any(item.episode_id != event.episode_id for item in history):
         raise ValueError("RuntimeEvent Process Quality history cannot cross Episodes.")
+    timestamps = tuple(
+        item.current_observation.observation_timestamp for item in history
+    )
+    if timestamps[-1] != event.cycle_timestamp:
+        raise ValueError(
+            "RuntimeEvent current Process Quality timestamp must match the cycle."
+        )
+    if any(
+        earlier >= later
+        for earlier, later in zip(timestamps, timestamps[1:])
+    ):
+        raise ValueError(
+            "RuntimeEvent Process Quality history timestamps must increase."
+        )
     expected_previous = history[-2].to_reference() if len(history) > 1 else None
     if event.previous_process_quality_reference != expected_previous:
         raise ValueError(
@@ -329,6 +367,17 @@ def _validate_baseline_continuity(event: RuntimeEvent) -> None:
         or designation.to_reference() != reference
     ):
         raise ValueError("RuntimeEvent Healthy Baseline identity must match.")
+    if (
+        designation.creation_timestamp
+        != designation.source_assessment.observation.observation_timestamp
+        or designation.creation_timestamp > event.cycle_timestamp
+        or designation.effective_after_assessment.observation.observation_timestamp
+        > event.cycle_timestamp
+    ):
+        raise ValueError(
+            "RuntimeEvent Healthy Baseline timestamps must belong to this "
+            "or an earlier cycle."
+        )
     created_by_current_assessment = (
         reference.source_assessment
         == event.process_quality_assessment.to_reference()

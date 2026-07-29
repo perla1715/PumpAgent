@@ -26,6 +26,16 @@ is retired rather than retained as a second success meaning.
 
 Only a completed event may advance Episode analytical continuity.
 
+The admitted `MarketSnapshot.timestamp` is the canonical timestamp authority
+for the current analytical cycle. `RuntimeEvent.cycle_timestamp`,
+`ObservationPackage.observation_timestamp`, current Process Evidence, current
+Process Quality, Scenario Probability observation/creation timestamps, and
+DecisionAssessment creation time must equal it. Historical Process Quality,
+Scenario, Decision, and Healthy Baseline provenance must precede the current
+cycle where their domain contracts require history. The public compatibility
+parameter `classification_timestamp` is accepted only when it equals the
+admitted snapshot timestamp; omission derives it from the snapshot.
+
 ## Compatibility projection
 
 `AgentCycleResult` is retained only as a diagnostic compatibility projection.

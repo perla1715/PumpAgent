@@ -262,6 +262,10 @@ class RuntimeOrchestrator:
                 "Healthy Baseline reference must match its canonical designation."
             )
 
+        analytical_timestamp = _canonical_analytical_timestamp(
+            snapshot,
+            classification_timestamp,
+        )
         event_id = runtime_event_id or _cycle_event_id(snapshot)
         event = _initial_runtime_event(
             snapshot,
@@ -282,7 +286,7 @@ class RuntimeOrchestrator:
             previous_process_evidence=previous_process_evidence,
             exchange=snapshot.exchange, symbol=snapshot.symbol,
             timeframe=snapshot.timeframe,
-            classification_timestamp=classification_timestamp or snapshot.timestamp,
+            classification_timestamp=analytical_timestamp,
         )
         process_evidence = classify_market_process(process_input)
         event = event.with_sections(process_evidence=process_evidence)
@@ -638,6 +642,22 @@ def _update_temporal_confidence(
 def _cycle_event_id(snapshot: MarketSnapshot) -> str:
     timestamp = snapshot.timestamp.isoformat()
     return f"agent-cycle:{snapshot.exchange}:{snapshot.symbol}:{snapshot.timeframe}:{snapshot.event_id}:{timestamp}"
+
+
+def _canonical_analytical_timestamp(
+    snapshot: MarketSnapshot,
+    classification_timestamp: datetime | None,
+) -> datetime:
+    """Resolve the admitted cycle timestamp used by every analytical stage."""
+
+    if classification_timestamp is None:
+        return snapshot.timestamp
+    if classification_timestamp != snapshot.timestamp:
+        raise ValueError(
+            "classification_timestamp must equal the admitted "
+            "MarketSnapshot.timestamp."
+        )
+    return snapshot.timestamp
 
 
 def _agent_state_type_from_value(value: str | AgentStateType) -> AgentStateType:
