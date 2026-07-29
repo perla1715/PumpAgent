@@ -63,7 +63,7 @@ class HealthyBaselinePolicyTests(TestCase):
                 HealthyBaselineDesignationPolicyInput(
                     current_assessment=high_uncertainty,
                     process_evidence=process,
-                    data_quality_status=second.runtime_result.snapshot.data_quality_status,
+                    data_quality_status=second.runtime_result.market_snapshot.data_quality_status,
                     previous_assessments=previous,
                 )
             )
@@ -78,7 +78,7 @@ class HealthyBaselinePolicyTests(TestCase):
                     HealthyBaselineDesignationPolicyInput(
                         current_assessment=current,
                         process_evidence=insufficient_process,
-                        data_quality_status=second.runtime_result.snapshot.data_quality_status,
+                        data_quality_status=second.runtime_result.market_snapshot.data_quality_status,
                         previous_assessments=previous,
                     )
                 )
@@ -100,7 +100,7 @@ class HealthyBaselinePolicyTests(TestCase):
                 HealthyBaselineDesignationPolicyInput(
                     current_assessment=without_structure,
                     process_evidence=process,
-                    data_quality_status=second.runtime_result.snapshot.data_quality_status,
+                    data_quality_status=second.runtime_result.market_snapshot.data_quality_status,
                     previous_assessments=previous,
                 )
             )
@@ -259,7 +259,7 @@ class HealthyBaselinePolicyTests(TestCase):
                     process_evidence=replace(
                         process, episode_id="different-episode"
                     ),
-                    data_quality_status=second.runtime_result.snapshot.data_quality_status,
+                    data_quality_status=second.runtime_result.market_snapshot.data_quality_status,
                     previous_assessments=(
                         replace(
                             first.runtime_result.process_quality_assessment,
@@ -294,7 +294,7 @@ class HealthyBaselinePolicyTests(TestCase):
                 HealthyBaselineDesignationPolicyInput(
                     current_assessment=current,
                     process_evidence=process,
-                    data_quality_status=second.runtime_result.snapshot.data_quality_status,
+                    data_quality_status=second.runtime_result.market_snapshot.data_quality_status,
                     previous_assessments=(
                         first.runtime_result.process_quality_assessment,
                     ),

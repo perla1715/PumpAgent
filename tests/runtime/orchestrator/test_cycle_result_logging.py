@@ -13,11 +13,40 @@ if str(SRC) not in sys.path:
 
 from pumpagent.runtime.orchestrator import (
     serialize_agent_cycle_result,
+    serialize_runtime_event,
 )
-from tests.runtime.orchestrator.test_runtime_loop import make_snapshot, run_agent_cycle
+from tests.runtime.orchestrator.test_runtime_loop import (
+    TEST_EPISODE_ID,
+    make_snapshot,
+    run_agent_cycle,
+)
+from pumpagent.runtime.orchestrator import RuntimeOrchestrator
 
 
 class RuntimeCycleResultLoggingTests(unittest.TestCase):
+    def test_canonical_runtime_event_serializes_complete_aggregate(self) -> None:
+        event = RuntimeOrchestrator().process_market_update(
+            make_snapshot(), episode_id=TEST_EPISODE_ID
+        )
+
+        serialized = serialize_runtime_event(event)
+
+        self.assertEqual(
+            serialized["persistence_schema_version"],
+            "canonical_runtime_event_v1",
+        )
+        self.assertEqual(serialized["runtime_event"], event.to_dict())
+
+    def test_canonical_runtime_event_serialization_is_deterministic(self) -> None:
+        event = RuntimeOrchestrator().process_market_update(
+            make_snapshot(), episode_id=TEST_EPISODE_ID
+        )
+
+        self.assertEqual(
+            serialize_runtime_event(event),
+            serialize_runtime_event(event),
+        )
+
     def test_serialization_includes_core_fields(self) -> None:
         result = run_agent_cycle(make_snapshot(), previous_state="UNKNOWN")
 

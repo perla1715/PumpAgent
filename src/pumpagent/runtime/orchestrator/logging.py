@@ -9,14 +9,27 @@ from __future__ import annotations
 
 from typing import Any
 
-from pumpagent.runtime.orchestrator.runtime_loop import AgentCycleResult
+from pumpagent.runtime.domain import RuntimeEvent
+from pumpagent.runtime.orchestrator.cycle_projection import AgentCycleResult
 
 
 RUNTIME_CYCLE_SCHEMA_VERSION = "runtime_cycle_v4"
+CANONICAL_RUNTIME_EVENT_SCHEMA_VERSION = "canonical_runtime_event_v1"
+
+
+def serialize_runtime_event(event: RuntimeEvent) -> dict[str, Any]:
+    """Serialize the authoritative Runtime aggregate."""
+
+    if not isinstance(event, RuntimeEvent):
+        raise TypeError("event must be a RuntimeEvent.")
+    return {
+        "persistence_schema_version": CANONICAL_RUNTIME_EVENT_SCHEMA_VERSION,
+        "runtime_event": event.to_dict(),
+    }
 
 
 def serialize_agent_cycle_result(result: AgentCycleResult) -> dict[str, Any]:
-    """Return a deterministic plain-dictionary representation of one cycle."""
+    """Serialize the deprecated compatibility projection."""
 
     return {
         "schema_version": RUNTIME_CYCLE_SCHEMA_VERSION,

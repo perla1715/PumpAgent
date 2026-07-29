@@ -15,6 +15,8 @@ class DataQualityStatus(str, Enum):
 class RuntimeStatus(str, Enum):
     CREATED = "created"
     IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
     FINALIZED = "finalized"
     FAILED = "failed"
 

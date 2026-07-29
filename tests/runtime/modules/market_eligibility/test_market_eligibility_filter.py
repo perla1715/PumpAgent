@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest import TestCase, mock
 
 from pumpagent.runtime.domain import MarketSnapshot
-from pumpagent.runtime.domain.enums import DataQualityStatus
+from pumpagent.runtime.domain.enums import DataQualityStatus, RuntimeStatus
 from pumpagent.runtime.modules.market_eligibility import (
     MarketEligibilityConfig,
     MarketEligibilityFilter,
@@ -133,5 +133,9 @@ class MarketEligibilityFilterTests(TestCase):
         ) as perception:
             result = orchestrator.process_market_update(make_snapshot())
 
-        self.assertIs(result, rejected)
+        self.assertIs(result.runtime_status, RuntimeStatus.REJECTED)
+        self.assertIs(
+            result.compatibility_context["eligibility_result"],
+            rejected,
+        )
         perception.assert_not_called()

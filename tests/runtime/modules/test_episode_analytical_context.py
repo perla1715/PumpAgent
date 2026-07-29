@@ -75,7 +75,9 @@ class EpisodeAnalyticalContextTests(TestCase):
         context = first.resulting_watchlist_entry.active_episode_analytical_context
         self.assertIsInstance(context, EpisodeAnalyticalContext)
         self.assertEqual(context.schema_version, "episode_analytical_context_v5")
-        self.assertEqual(context.latest_hypothesis, first.runtime_result.hypothesis)
+        self.assertEqual(
+            context.latest_hypothesis, first.runtime_result.hypothesis_package
+        )
         self.assertEqual(context.latest_agent_state, first.runtime_result.agent_state)
         self.assertIs(
             context.latest_agent_state.process_direction,
@@ -89,7 +91,10 @@ class EpisodeAnalyticalContextTests(TestCase):
             context.latest_confidence_assessment,
             first.runtime_result.confidence_assessment,
         )
-        self.assertEqual(context.latest_confidence, first.runtime_result.confidence)
+        self.assertEqual(
+            context.latest_confidence,
+            first.runtime_result.compatibility_context["confidence"],
+        )
         self.assertEqual(context.latest_runtime_event_id, first.runtime_event_id)
         self.assertEqual(context.latest_process_evidence, first.runtime_result.process_evidence)
         self.assertEqual(context.completed_analytical_cycle_count, 1)

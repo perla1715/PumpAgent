@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 from unittest import TestCase, mock
 
-from pumpagent.runtime.domain.enums import DataQualityStatus
+from pumpagent.runtime.domain.enums import DataQualityStatus, RuntimeStatus
 from pumpagent.runtime.domain.process_evidence import ProcessTransition
 from pumpagent.runtime.domain.process_quality import (
     canonical_healthy_baseline_id,
@@ -88,11 +88,11 @@ class ProcessQualityEngineTests(TestCase):
                     detected_transition=ProcessTransition.UNCHANGED,
                 ),
                 structural_evidence=replace(
-                    source.structure_result,
+                    source.structural_evidence,
                     event_id="forged-input-event",
                 ),
                 market_efficiency_evidence=replace(
-                    source.market_result,
+                    source.market_efficiency_evidence,
                     event_id="forged-input-event",
                 ),
                 data_quality_status=DataQualityStatus.VALID,
@@ -216,15 +216,16 @@ class ProcessQualityEngineTests(TestCase):
         next_candle = CANDLE + timedelta(minutes=5)
         runtime = RuntimeOrchestrator()
 
-        with self.assertRaisesRegex(ValueError, "cross Episode"):
-            runtime.process_market_update(
+        failed = runtime.process_market_update(
                 process_snapshot(next_candle),
                 episode_id="different-episode",
                 previous_process_quality_assessments=(
                     first.process_quality_assessment,
                 ),
                 classification_timestamp=next_candle,
-            )
+        )
+        self.assertIs(failed.runtime_status, RuntimeStatus.FAILED)
+        self.assertIn("cross Episode", failed.errors_or_warnings[0])
 
         supported_candle = next_candle + timedelta(minutes=5)
         supported = runtime.process_market_update(
@@ -255,8 +256,8 @@ class ProcessQualityEngineTests(TestCase):
                     process_evidence=replace(
                         supported.process_evidence, episode_id="different-episode"
                     ),
-                    structural_evidence=supported.structure_result,
-                    market_efficiency_evidence=supported.market_result,
+                    structural_evidence=supported.structural_evidence,
+                    market_efficiency_evidence=supported.market_efficiency_evidence,
                     data_quality_status=DataQualityStatus.VALID,
                     healthy_baseline=baseline,
                 )

@@ -1,26 +1,20 @@
-"""Minimal fixture-based Runtime Orchestrator skeleton.
-
-This skeleton creates a RuntimeEvent, populates its market_snapshot section,
-and can optionally run through Decision / Alert.
-"""
+"""Fixture input wrapper for the canonical Runtime orchestrator."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+import warnings
 
-from pumpagent.runtime.domain import HypothesisLifecycleStatus, RuntimeEvent
-from pumpagent.runtime.domain.enums import ProcessDirection
-from pumpagent.runtime.modules.agent_state import add_agent_state
-from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
+from pumpagent.runtime.domain import RuntimeEvent
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
-from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
-from pumpagent.runtime.modules.perception import add_observation_package
-from pumpagent.runtime.modules.structure import add_structural_evidence
+from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
 
 
 class FixtureRuntimeStage(str, Enum):
+    """Deprecated fixture selection retained for deterministic compatibility."""
+
     MARKET_DATA = "market_data"
     OBSERVATION_PACKAGE = "observation_package"
     PERCEPTION = "perception"
@@ -55,22 +49,26 @@ def run_fixture_runtime_cycle(
     run_learning_memory: bool = False,
     target_stage: FixtureRuntimeStage | str | None = None,
 ) -> RuntimeEvent:
-    """Create a RuntimeEvent and optionally run the fixture Runtime flow."""
+    """Load fixture input and delegate all analysis to RuntimeOrchestrator."""
 
+    if run_learning_memory:
+        raise ValueError(
+            "Learning Memory is outside the Runtime Orchestrator boundary."
+        )
     stage = _resolve_target_stage(
         target_stage=target_stage,
-        run_perception=run_perception,
-        run_structure=run_structure,
-        run_market_efficiency=run_market_efficiency,
-        run_hypothesis=run_hypothesis,
-        run_agent_state=run_agent_state,
-        run_scenario_probability=run_scenario_probability,
-        run_confidence=run_confidence,
-        run_decision_alert=run_decision_alert,
-        run_learning_memory=run_learning_memory,
+        flags=(
+            run_perception,
+            run_structure,
+            run_market_efficiency,
+            run_hypothesis,
+            run_agent_state,
+            run_scenario_probability,
+            run_confidence,
+            run_decision_alert,
+        ),
     )
-
-    event = RuntimeEvent(
+    input_event = RuntimeEvent(
         event_id=event_id,
         schema_version=schema_version,
         cycle_timestamp=cycle_timestamp,
@@ -78,40 +76,30 @@ def run_fixture_runtime_cycle(
         exchange=exchange,
         timeframe=timeframe,
     )
+    input_event = add_market_snapshot_from_fixture(input_event, fixture_path)
+    if stage is FixtureRuntimeStage.MARKET_DATA:
+        return input_event
 
-    event = add_market_snapshot_from_fixture(event, fixture_path)
+    warnings.warn(
+        "Fixture stage selection is deprecated; analytical fixture execution "
+        "always delegates the complete canonical pipeline.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if not isinstance(episode_id, str) or not episode_id.strip():
+        raise ValueError("episode_id is required for canonical fixture execution.")
+    if not isinstance(hypothesis_id, str) or not hypothesis_id.strip():
+        raise ValueError("hypothesis_id is required for canonical fixture execution.")
 
-    if _stage_reaches(stage, FixtureRuntimeStage.OBSERVATION_PACKAGE):
-        event = add_observation_package(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.STRUCTURE):
-        event = add_structural_evidence(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.MARKET_EFFICIENCY):
-        event = add_market_efficiency_evidence(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.HYPOTHESIS):
-        if not isinstance(episode_id, str) or not episode_id.strip():
-            raise ValueError("episode_id is required for the Hypothesis stage.")
-        if not isinstance(hypothesis_id, str) or not hypothesis_id.strip():
-            raise ValueError("hypothesis_id is required for the Hypothesis stage.")
-        event = add_hypothesis_package(
-            event,
-            episode_id=episode_id,
-            hypothesis_id=hypothesis_id,
-            explanation_confidence_score=0,
-            lifecycle_status=HypothesisLifecycleStatus.CREATED,
-            hypothesis_change_reason="Initial fixture hypothesis for the episode.",
-        )
-
-    if _stage_reaches(stage, FixtureRuntimeStage.AGENT_STATE):
-        event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
-
-    return event
+    runtime = RuntimeOrchestrator(hypothesis_id_generator=lambda: hypothesis_id)
+    return runtime.process_market_update(
+        input_event.market_snapshot,
+        episode_id=episode_id,
+    )
 
 
 def run_fixture_market_data_cycle(**kwargs: object) -> RuntimeEvent:
-    """Compatibility alias for the renamed fixture Runtime entry point."""
+    """Compatibility alias that delegates to the fixture input wrapper."""
 
     return run_fixture_runtime_cycle(**kwargs)
 
@@ -119,76 +107,21 @@ def run_fixture_market_data_cycle(**kwargs: object) -> RuntimeEvent:
 def _resolve_target_stage(
     *,
     target_stage: FixtureRuntimeStage | str | None,
-    run_perception: bool,
-    run_structure: bool,
-    run_market_efficiency: bool,
-    run_hypothesis: bool,
-    run_agent_state: bool,
-    run_scenario_probability: bool,
-    run_confidence: bool,
-    run_decision_alert: bool,
-    run_learning_memory: bool,
+    flags: tuple[bool, ...],
 ) -> FixtureRuntimeStage:
-    if run_learning_memory:
-        raise ValueError(
-            "Learning Memory is outside the Runtime Orchestrator v0.1 boundary."
+    if target_stage is not None:
+        requested = (
+            target_stage
+            if isinstance(target_stage, FixtureRuntimeStage)
+            else FixtureRuntimeStage(str(target_stage))
         )
-
-    requested_stage = (
-        target_stage
-        if isinstance(target_stage, FixtureRuntimeStage)
-        else FixtureRuntimeStage(str(target_stage))
-        if target_stage is not None
-        else None
-    )
-    retired_stages = frozenset(
-        (
-            FixtureRuntimeStage.SCENARIO_PROBABILITY,
-            FixtureRuntimeStage.CONFIDENCE,
-            FixtureRuntimeStage.DECISION_ALERT,
+        return (
+            FixtureRuntimeStage.OBSERVATION_PACKAGE
+            if requested is FixtureRuntimeStage.PERCEPTION
+            else requested
         )
+    return (
+        FixtureRuntimeStage.DECISION_ALERT
+        if any(flags)
+        else FixtureRuntimeStage.MARKET_DATA
     )
-    if (
-        requested_stage in retired_stages
-        or run_scenario_probability
-        or run_confidence
-        or run_decision_alert
-    ):
-        raise ValueError(
-            "Fixture Runtime stages after Agent State are retired because the "
-            "legacy RuntimeEvent path cannot supply canonical Process Evidence "
-            "and Process Quality."
-        )
-    if requested_stage is not None:
-        if requested_stage is FixtureRuntimeStage.PERCEPTION:
-            return FixtureRuntimeStage.OBSERVATION_PACKAGE
-        return requested_stage
-    if run_agent_state:
-        return FixtureRuntimeStage.AGENT_STATE
-    if run_hypothesis:
-        return FixtureRuntimeStage.HYPOTHESIS
-    if run_market_efficiency:
-        return FixtureRuntimeStage.MARKET_EFFICIENCY
-    if run_structure:
-        return FixtureRuntimeStage.STRUCTURE
-    if run_perception:
-        return FixtureRuntimeStage.OBSERVATION_PACKAGE
-    return FixtureRuntimeStage.MARKET_DATA
-
-
-def _stage_reaches(
-    current_stage: FixtureRuntimeStage,
-    required_stage: FixtureRuntimeStage,
-) -> bool:
-    stage_order = (
-        FixtureRuntimeStage.MARKET_DATA,
-        FixtureRuntimeStage.OBSERVATION_PACKAGE,
-        FixtureRuntimeStage.STRUCTURE,
-        FixtureRuntimeStage.MARKET_EFFICIENCY,
-        FixtureRuntimeStage.HYPOTHESIS,
-        FixtureRuntimeStage.AGENT_STATE,
-        FixtureRuntimeStage.SCENARIO_PROBABILITY,
-        FixtureRuntimeStage.CONFIDENCE,
-        FixtureRuntimeStage.DECISION_ALERT,
-    )
-    return stage_order.index(current_stage) >= stage_order.index(required_stage)

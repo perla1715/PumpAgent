@@ -42,10 +42,9 @@ The canonical lifecycle is:
 
 `Scanner Request -> Observation Policy -> Observation Episode -> Observation Cycles -> Process Reasoning -> Hypothesis -> Agent State -> Confidence -> Trading Recommendation -> Episode Closure`
 
-The lifecycle contract is an approved architectural boundary, not a statement
-that Observation Policy or Episode-aware orchestration is already implemented.
-The lightweight Runtime Loop and older `RuntimeEvent` path described below are
-current implementation paths being evolved toward this contract.
+The lifecycle contract is an approved architectural boundary. `RuntimeEvent`
+is the sole canonical cycle aggregate and the controlled Runtime loop is the
+sole production analytical orchestrator.
 
 ---
 
@@ -88,7 +87,7 @@ normalizers, validators, quality translators, or bridge components.
 
 ---
 
-# Lightweight Runtime Loop MVP
+# Canonical Runtime Loop MVP
 
 MarketSnapshot
 
@@ -118,7 +117,11 @@ ConfidenceAssessment
 
 ↓
 
-AgentCycleResult
+DecisionAssessment
+
+↓
+
+completed RuntimeEvent
 
 ↓
 
@@ -129,7 +132,8 @@ update. It receives one `MarketSnapshot`, builds structure and market
 efficiency evidence, combines them with snapshot metrics, builds the current
 hypothesis, maps the hypothesis state into canonical `AgentState`, builds
 Scenario Probability from those canonical conclusions, assesses final chain
-reliability, and returns an `AgentCycleResult`.
+reliability, produces a DecisionAssessment, and returns one completed
+`RuntimeEvent`.
 
 The Runtime Orchestrator does not make trading decisions, persist state,
 communicate with users, or call external services.
@@ -142,24 +146,23 @@ not a trading Decision: `UP` does not mean `LOOK_FOR_LONG`, and `DOWN` does not
 mean `LOOK_FOR_SHORT`. Directional Decision policy remains outside this Runtime
 slice until trader-approved rules exist.
 
-The older `RuntimeEvent` fixture path remains available only through Agent
-State. Its Scenario Probability, Confidence, and Decision / Alert stages are
-retired because that aggregate does not carry the authenticated Process
-Evidence and Process Quality contracts required by canonical Scenario
-Probability.
+`AgentCycleResult` is a deprecated compatibility and diagnostic projection
+derived in one direction from a completed `RuntimeEvent`. It is not an
+authoritative result, cannot be converted back into a RuntimeEvent, and cannot
+execute analytical stages.
 
-The fixture Runtime Orchestrator still supports immutable `RuntimeEvent`
-handoff through Agent State for fixture compatibility. It does not perform
-market analysis, fabricate missing Process contracts, classify alerts, access
-Live Data, or execute trades.
+The fixture Runtime is an input wrapper only. Market-data-only fixture loading
+may return a created RuntimeEvent; every analytical fixture request delegates
+to the same controlled Runtime orchestrator and produces the same completed
+canonical aggregate.
 
 Learning Memory is not orchestrated by the Runtime Orchestrator.
 
 ---
 
-# RuntimeEvent Contract Path
+# RuntimeEvent Contract
 
-The older immutable `RuntimeEvent` contract path is:
+The immutable canonical `RuntimeEvent` path is:
 
 MarketSnapshot
 
@@ -655,7 +658,9 @@ Scenario Probability
     ↓
 ConfidenceAssessment
     ↓
-AgentCycleResult
+DecisionAssessment
+    ↓
+completed RuntimeEvent
     ↓
 successful EpisodeAnalyticalContext commit
 ```
@@ -740,16 +745,18 @@ unavailable, and numeric final confidence remains unimplemented.
 compatibility projection sourced directly from
 `HypothesisPackage.explanation_confidence_score`. It is not final confidence
 and must not be reused as `ConfidenceAssessment.numeric_confidence_score`.
-`AgentCycleResult.confidence_assessment` is canonical final analytical-chain
-reliability.
+`RuntimeEvent.confidence_assessment` is canonical final analytical-chain
+reliability. The same value exposed by AgentCycleResult is a compatibility
+projection.
 
 The controlled Runtime supplies the existing
 `MarketSnapshot.data_quality_status` conclusion using the Confidence engine's
 established `market_snapshot_data_quality:<status>` context. This introduces no
 new data-quality rule. Canonical Confidence is committed only after successful
 cycle completion; failed and ineligible cycles preserve prior continuity.
-Retirement of the numeric compatibility field and operational Decision/Alert
-integration remain later authorized slices.
+Retirement of the numeric compatibility field remains a later authorized
+slice. DecisionAssessment is integrated as the terminal canonical analytical
+section.
 
 Confidence can:
 

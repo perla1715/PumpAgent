@@ -7,7 +7,6 @@ effects.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable
 from typing import Any
@@ -22,12 +21,13 @@ from pumpagent.runtime.domain import (
     ObservationPackage,
     ProcessQualityAssessment,
     ProcessQualityAssessmentReference,
+    RuntimeEvent,
     HealthyBaselineDesignation,
     HealthyBaselineReference,
     ScenarioProbability,
     StructuralEvidence,
 )
-from pumpagent.runtime.domain.enums import AgentStateType
+from pumpagent.runtime.domain.enums import AgentStateType, RuntimeStatus
 from pumpagent.runtime.domain.process_evidence import ProcessEvidence, ProcessState, ProcessTransition
 from pumpagent.runtime.modules.evidence import (
     Evidence,
@@ -81,47 +81,10 @@ from pumpagent.runtime.orchestrator.diagnostic_report import (
     DiagnosticRuntimeReport,
     build_diagnostic_runtime_report,
 )
-
-
-@dataclass(frozen=True)
-class AgentCycleResult:
-    event_id: str
-    snapshot: MarketSnapshot
-    structure_result: StructuralEvidence
-    market_result: MarketEfficiencyEvidence
-    previous_state: str
-    new_state: str
-    agent_state: AgentState
-    hypothesis: HypothesisPackage
-    scenario_probability: ScenarioProbability
-    # Canonical final reliability of the complete analytical chain.
-    confidence_assessment: ConfidenceAssessment
-    # Temporary compatibility projection of Hypothesis explanation confidence.
-    confidence: int
-    evidence: tuple[Evidence, ...]
-    timestamp: datetime
-    watchlist_action: str
-    watchlist_observation_count: int
-    temporal_confidence: TemporalConfidenceState | None
-    confidence_trend: str
-    confidence_delta: int | None
-    log_messages: tuple[str, ...] = ()
-    evidence_summary: EvidenceSummary | None = None
-    hypothesis_snapshot: HypothesisSnapshot | None = None
-    hypothesis_history_size: int = 0
-    history_trend_summary: HistoryTrendSummary | None = None
-    diagnostic_report: DiagnosticRuntimeReport | None = None
-    hypothesis_evaluation: HypothesisEvaluation | None = None
-    process_evidence: ProcessEvidence | None = None
-    process_state: ProcessState | None = None
-    process_transition: ProcessTransition | None = None
-    previous_process_evidence_used: bool = False
-    process_quality_assessment: ProcessQualityAssessment | None = None
-    previous_process_quality_reference: ProcessQualityAssessmentReference | None = None
-    process_quality_history: tuple[ProcessQualityAssessment, ...] = ()
-    healthy_baseline_reference: HealthyBaselineReference | None = None
-    healthy_baseline_designation: HealthyBaselineDesignation | None = None
-    decision_assessment: DecisionAssessment | None = None
+from pumpagent.runtime.orchestrator.cycle_projection import (
+    AgentCycleResult,
+    project_agent_cycle_result,
+)
 
 
 class RuntimeOrchestrator:
@@ -173,12 +136,57 @@ class RuntimeOrchestrator:
         healthy_baseline_designation: HealthyBaselineDesignation | None = None,
         previous_scenario_probability: ScenarioProbability | None = None,
         classification_timestamp: datetime | None = None,
-    ) -> AgentCycleResult | MarketEligibilityResult:
-        # TODO: Unify accepted and rejected Runtime outcomes when the complete
-        # Process Engine architecture and its boundary contracts are finalized.
+    ) -> RuntimeEvent:
+        """Return the one canonical Runtime aggregate for every cycle outcome."""
+
+        try:
+            return self._process_market_update(
+                snapshot,
+                previous_state=previous_state,
+                previous_hypothesis=previous_hypothesis,
+                episode_id=episode_id,
+                previous_process_evidence=previous_process_evidence,
+                previous_process_quality_assessments=previous_process_quality_assessments,
+                healthy_baseline_reference=healthy_baseline_reference,
+                healthy_baseline_designation=healthy_baseline_designation,
+                previous_scenario_probability=previous_scenario_probability,
+                classification_timestamp=classification_timestamp,
+            )
+        except Exception as exc:
+            return _initial_runtime_event(
+                snapshot,
+                episode_id=episode_id,
+                runtime_status=RuntimeStatus.FAILED,
+                errors_or_warnings=(f"{type(exc).__name__}: {exc}",),
+            )
+
+    def _process_market_update(
+        self,
+        snapshot: MarketSnapshot,
+        *,
+        previous_state: str = "UNKNOWN",
+        previous_hypothesis: HypothesisPackage | None = None,
+        episode_id: str | None = None,
+        previous_process_evidence: ProcessEvidence | None = None,
+        previous_process_quality_assessments: tuple[
+            ProcessQualityAssessment, ...
+        ] = (),
+        healthy_baseline_reference: HealthyBaselineReference | None = None,
+        healthy_baseline_designation: HealthyBaselineDesignation | None = None,
+        previous_scenario_probability: ScenarioProbability | None = None,
+        classification_timestamp: datetime | None = None,
+    ) -> RuntimeEvent:
         eligibility = self.market_eligibility_filter.evaluate(snapshot)
         if not eligibility.eligible:
-            return eligibility
+            return _initial_runtime_event(
+                snapshot,
+                episode_id=episode_id,
+                runtime_status=RuntimeStatus.REJECTED,
+                errors_or_warnings=(
+                    f"market_eligibility:{eligibility.reason.value}",
+                ),
+                compatibility_context={"eligibility_result": eligibility},
+            )
         if not isinstance(episode_id, str) or not episode_id.strip():
             raise ValueError(
                 "A Lifecycle-owned episode_id is required for canonical hypothesis production."
@@ -199,9 +207,17 @@ class RuntimeOrchestrator:
             )
 
         event_id = _cycle_event_id(snapshot)
+        event = _initial_runtime_event(
+            snapshot,
+            episode_id=episode_id,
+            runtime_status=RuntimeStatus.IN_PROGRESS,
+        )
         observations = build_observation_package(snapshot, runtime_event_id=event_id)
+        event = event.with_sections(observation_package=observations)
         structure_result = build_structural_evidence(observations, runtime_event_id=event_id)
+        event = event.with_sections(structural_evidence=structure_result)
         market_result = build_market_efficiency_evidence(observations, runtime_event_id=event_id)
+        event = event.with_sections(market_efficiency_evidence=market_result)
         process_input = prepare_process_classification_input(
             episode_id=episode_id, runtime_event_id=event_id,
             observations=observations, structural_evidence=structure_result,
@@ -212,6 +228,7 @@ class RuntimeOrchestrator:
             classification_timestamp=classification_timestamp or snapshot.timestamp,
         )
         process_evidence = classify_market_process(process_input)
+        event = event.with_sections(process_evidence=process_evidence)
         process_quality_assessment = build_process_quality_assessment(
             ProcessQualityAssessmentInput(
                 process_evidence=process_evidence,
@@ -222,6 +239,19 @@ class RuntimeOrchestrator:
                 healthy_baseline=healthy_baseline_reference,
             )
         )
+        process_quality_history = (
+            previous_process_quality_assessments + (process_quality_assessment,)
+        )
+        previous_process_quality_reference = (
+            previous_process_quality_assessments[-1].to_reference()
+            if previous_process_quality_assessments
+            else None
+        )
+        event = event.with_sections(
+            process_quality_assessment=process_quality_assessment,
+            previous_process_quality_reference=previous_process_quality_reference,
+            process_quality_history=process_quality_history,
+        )
         selected_baseline_designation = designate_healthy_baseline(
             HealthyBaselineDesignationPolicyInput(
                 current_assessment=process_quality_assessment,
@@ -230,6 +260,14 @@ class RuntimeOrchestrator:
                 previous_assessments=previous_process_quality_assessments,
                 existing_designation=healthy_baseline_designation,
             )
+        )
+        event = event.with_sections(
+            healthy_baseline_reference=(
+                selected_baseline_designation.to_reference()
+                if selected_baseline_designation is not None
+                else None
+            ),
+            healthy_baseline_designation=selected_baseline_designation,
         )
         hypothesis_input = _combine_hypothesis_input(
             snapshot,
@@ -246,6 +284,7 @@ class RuntimeOrchestrator:
             previous=previous_hypothesis,
             new_hypothesis_id=self.hypothesis_id_generator,
         )
+        event = event.with_sections(hypothesis_package=hypothesis)
         # Temporary compatibility projection for legacy diagnostic consumers.
         # Final analytical-chain reliability is confidence_assessment below.
         confidence = hypothesis.explanation_confidence_score
@@ -259,6 +298,7 @@ class RuntimeOrchestrator:
             supporting_evidence=tuple(item.value for item in evidence if item.positive),
             contradicting_evidence=tuple(item.value for item in evidence if not item.positive),
         )
+        event = event.with_sections(agent_state=agent_state)
         scenario_probability = build_scenario_probability(
             hypothesis,
             agent_state,
@@ -269,6 +309,7 @@ class RuntimeOrchestrator:
             runtime_event_id=event_id,
             active_episode_id=episode_id,
         )
+        event = event.with_sections(scenario_probability=scenario_probability)
         confidence_assessment = build_confidence_assessment(
             hypothesis,
             agent_state,
@@ -280,6 +321,7 @@ class RuntimeOrchestrator:
                 f"{snapshot.data_quality_status.value}"
             ),
         )
+        event = event.with_sections(confidence_assessment=confidence_assessment)
         decision_assessment = build_decision_assessment(
             DecisionEngineInput(
                 process_quality_assessment=process_quality_assessment,
@@ -290,6 +332,7 @@ class RuntimeOrchestrator:
                 healthy_baseline_reference=healthy_baseline_reference,
             )
         )
+        event = event.with_sections(decision_assessment=decision_assessment)
         previous_state_name = agent_state.previous_state.name
         new_state_name = agent_state.current_state.name
         watchlist_action, watchlist_observation_count = self.watchlist.track_cycle(
@@ -357,59 +400,31 @@ class RuntimeOrchestrator:
             created_at=snapshot.timestamp,
         )
 
-        return AgentCycleResult(
-            event_id=event_id,
-            snapshot=snapshot,
-            structure_result=structure_result,
-            market_result=market_result,
-            previous_state=previous_state_name,
-            new_state=new_state_name,
-            agent_state=agent_state,
-            hypothesis=hypothesis,
-            scenario_probability=scenario_probability,
-            confidence_assessment=confidence_assessment,
-            confidence=confidence,
-            evidence=evidence,
-            timestamp=snapshot.timestamp,
-            watchlist_action=watchlist_action,
-            watchlist_observation_count=watchlist_observation_count,
-            temporal_confidence=temporal_confidence,
-            evidence_summary=evidence_summary,
-            hypothesis_snapshot=hypothesis_snapshot,
-            confidence_trend=confidence_trend,
-            confidence_delta=confidence_delta,
-            log_messages=_cycle_log_messages(
+        return event.with_sections(
+            runtime_status=RuntimeStatus.COMPLETED,
+            compatibility_context={
+                "confidence": confidence,
+                "evidence": evidence,
+                "watchlist_action": watchlist_action,
+                "watchlist_observation_count": watchlist_observation_count,
+                "temporal_confidence": temporal_confidence,
+                "evidence_summary": evidence_summary,
+                "hypothesis_snapshot": hypothesis_snapshot,
+                "confidence_trend": confidence_trend,
+                "confidence_delta": confidence_delta,
+                "log_messages": _cycle_log_messages(
                 previous_state=previous_state_name,
                 new_state=new_state_name,
                 hypothesis=hypothesis,
                 scenario_probability=scenario_probability,
                 confidence_assessment=confidence_assessment,
             ),
-            hypothesis_history_size=hypothesis_history_size,
-            history_trend_summary=history_trend_summary,
-            diagnostic_report=diagnostic_report,
-            hypothesis_evaluation=hypothesis_evaluation,
-            process_evidence=process_evidence,
-            process_state=process_evidence.current_process_state,
-            process_transition=process_evidence.detected_transition,
-            previous_process_evidence_used=previous_process_evidence is not None,
-            process_quality_assessment=process_quality_assessment,
-            previous_process_quality_reference=(
-                previous_process_quality_assessments[-1].to_reference()
-                if previous_process_quality_assessments
-                else None
-            ),
-            process_quality_history=(
-                previous_process_quality_assessments
-                + (process_quality_assessment,)
-            ),
-            healthy_baseline_reference=(
-                selected_baseline_designation.to_reference()
-                if selected_baseline_designation is not None
-                else None
-            ),
-            healthy_baseline_designation=selected_baseline_designation,
-            decision_assessment=decision_assessment,
+                "hypothesis_history_size": hypothesis_history_size,
+                "history_trend_summary": history_trend_summary,
+                "diagnostic_report": diagnostic_report,
+                "hypothesis_evaluation": hypothesis_evaluation,
+                "previous_process_evidence_used": previous_process_evidence is not None,
+            },
         )
 
 
@@ -433,13 +448,36 @@ def prepare_process_classification_input(
     )
 
 
+def _initial_runtime_event(
+    snapshot: MarketSnapshot,
+    *,
+    episode_id: str | None,
+    runtime_status: RuntimeStatus,
+    errors_or_warnings: tuple[str, ...] = (),
+    compatibility_context: dict[str, Any] | None = None,
+) -> RuntimeEvent:
+    return RuntimeEvent(
+        event_id=_cycle_event_id(snapshot),
+        schema_version="runtime_event_v2",
+        cycle_timestamp=snapshot.timestamp,
+        symbol=snapshot.symbol,
+        exchange=snapshot.exchange,
+        timeframe=snapshot.timeframe,
+        episode_id=episode_id,
+        runtime_status=runtime_status,
+        market_snapshot=snapshot,
+        errors_or_warnings=errors_or_warnings,
+        compatibility_context=compatibility_context or {},
+    )
+
+
 def run_agent_cycle(
     snapshot: MarketSnapshot,
     *,
     previous_state: str = "UNKNOWN",
     episode_id: str,
     previous_hypothesis: HypothesisPackage | None = None,
-) -> AgentCycleResult | MarketEligibilityResult:
+) -> RuntimeEvent:
     """Convenience entry point for one runtime reasoning cycle."""
 
     return RuntimeOrchestrator().process_market_update(
@@ -447,6 +485,25 @@ def run_agent_cycle(
         previous_state=previous_state,
         previous_hypothesis=previous_hypothesis,
         episode_id=episode_id,
+    )
+
+
+def run_agent_cycle_compatibility(
+    snapshot: MarketSnapshot,
+    *,
+    previous_state: str = "UNKNOWN",
+    episode_id: str,
+    previous_hypothesis: HypothesisPackage | None = None,
+) -> AgentCycleResult:
+    """Deprecated compatibility entry point projected from canonical RuntimeEvent."""
+
+    return project_agent_cycle_result(
+        run_agent_cycle(
+            snapshot,
+            previous_state=previous_state,
+            episode_id=episode_id,
+            previous_hypothesis=previous_hypothesis,
+        )
     )
 
 

@@ -36,6 +36,7 @@ from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_ev
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
+from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
 from tests.runtime.modules.scenario_probability.test_scenario_probability_engine import (
     make_process_evidence,
     make_process_quality,
@@ -66,13 +67,12 @@ def make_base_event() -> RuntimeEvent:
 def make_event_with_decision_alert() -> RuntimeEvent:
     event = make_base_event()
     event = add_market_snapshot_from_fixture(event, FIXTURE)
-    event = add_observation_package(event)
-    event = add_structural_evidence(event)
-    event = add_market_efficiency_evidence(event)
-    event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
-    event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
-    event = add_canonical_scenario_probability(event)
-    event = add_confidence_assessment(event)
+    event = RuntimeOrchestrator(
+        hypothesis_id_generator=lambda: CANONICAL_HYPOTHESIS_INPUT["hypothesis_id"]
+    ).process_market_update(
+        event.market_snapshot,
+        episode_id=CANONICAL_HYPOTHESIS_INPUT["episode_id"],
+    )
     return add_decision_alert(event)
 
 
@@ -107,8 +107,11 @@ class LearningMemoryEngineTests(unittest.TestCase):
         )
         self.assertEqual(metadata.event_id, event.event_id)
         self.assertEqual(metadata.schema_version, event.schema_version)
-        self.assertEqual(metadata.case_id, "case-runtime-evt-1")
-        self.assertIn(event.decision_alert.decision_type.value, metadata.storage_reason)
+        self.assertEqual(metadata.case_id, f"case-{event.event_id}")
+        self.assertIn(
+            event.decision_assessment.decision_type.value,
+            metadata.storage_reason,
+        )
 
     def test_learning_memory_rejects_each_missing_completed_event_section(
         self,
@@ -117,10 +120,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
 
         for section in REQUIRED_EXPORT_EVENT_SECTIONS:
             with self.subTest(section=section):
-                incomplete_event = event.with_sections(**{section: None})
-
-                with self.assertRaisesRegex(LearningMemoryError, section):
-                    build_learning_metadata(incomplete_event, created_at=NOW)
+                with self.assertRaisesRegex(ValueError, section):
+                    event.with_sections(**{section: None})
 
     def test_learning_memory_rejects_mismatched_runtime_owned_event_ids(
         self,
@@ -147,6 +148,15 @@ class LearningMemoryEngineTests(unittest.TestCase):
                     mismatched_section = _replace_scenario_event_id(
                         section_value,
                         "other-event",
+                    )
+                elif section in {
+                    "process_evidence",
+                    "process_quality_assessment",
+                    "decision_assessment",
+                }:
+                    mismatched_section = copy.copy(section_value)
+                    object.__setattr__(
+                        mismatched_section, "runtime_event_id", "other-event"
                     )
                 else:
                     mismatched_section = replace(section_value, event_id="other-event")
@@ -188,17 +198,10 @@ class LearningMemoryEngineTests(unittest.TestCase):
         self.assertIsNone(metadata.human_annotation)
 
     def test_missing_observation_package_remains_case_ready(self) -> None:
-        event = make_event_with_decision_alert().with_sections(
-            observation_package=None
-        )
-
-        metadata = build_learning_metadata(event, created_at=NOW)
-
-        self.assertEqual(
-            classify_runtime_event(event),
-            LearningMemoryExportCategory.CASE_READY,
-        )
-        self.assertTrue(metadata.should_store)
+        with self.assertRaisesRegex(ValueError, "observation_package"):
+            make_event_with_decision_alert().with_sections(
+                observation_package=None
+            )
 
     def test_present_observation_package_event_id_is_validated(self) -> None:
         event = make_event_with_decision_alert()
@@ -260,20 +263,10 @@ class LearningMemoryEngineTests(unittest.TestCase):
                     )
 
     def test_missing_scenario_probability_is_review_only(self) -> None:
-        event = make_event_with_decision_alert().with_sections(
-            scenario_probability=None
-        )
-
-        metadata = build_learning_metadata(event, created_at=NOW)
-
-        self.assertEqual(
-            classify_runtime_event(event),
-            LearningMemoryExportCategory.REVIEW_ONLY,
-        )
-        self.assertFalse(metadata.should_store)
-        self.assertEqual(metadata.review_status, ReviewStatus.PENDING)
-        self.assertTrue(metadata.outcome_pending)
-        self.assertIn("Scenario Probability is missing", metadata.storage_reason)
+        with self.assertRaisesRegex(ValueError, "scenario_probability"):
+            make_event_with_decision_alert().with_sections(
+                scenario_probability=None
+            )
 
     def test_learning_memory_writes_only_learning_metadata(self) -> None:
         event = make_event_with_decision_alert()
@@ -358,19 +351,11 @@ class LearningMemoryEngineTests(unittest.TestCase):
                 self.assertNotIn(f"import {forbidden}", source)
                 self.assertNotIn(f"from pumpagent.{forbidden}", source)
 
-    def test_learning_memory_requires_decision_alert(self) -> None:
-        event = make_base_event()
-        event = add_market_snapshot_from_fixture(event, FIXTURE)
-        event = add_observation_package(event)
-        event = add_structural_evidence(event)
-        event = add_market_efficiency_evidence(event)
-        event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
-        event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
-        event = add_canonical_scenario_probability(event)
-        event = add_confidence_assessment(event)
-
-        with self.assertRaisesRegex(LearningMemoryError, "decision_alert"):
-            add_learning_metadata(event)
+    def test_learning_memory_requires_decision_assessment(self) -> None:
+        with self.assertRaisesRegex(ValueError, "decision_assessment"):
+            make_event_with_decision_alert().with_sections(
+                decision_assessment=None
+            )
 
     def test_learning_memory_serialization_is_storage_ready(self) -> None:
         event = make_event_with_decision_alert()

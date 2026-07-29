@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from pumpagent.runtime.domain import MarketSnapshot
+from pumpagent.runtime.domain import MarketSnapshot, RuntimeEvent
+from pumpagent.runtime.domain.enums import RuntimeStatus
 from pumpagent.runtime.domain.confidence_assessment import ConfidenceAssessment
 from pumpagent.runtime.domain.decision import DecisionAssessment
 from pumpagent.runtime.domain.scenario_probability import ScenarioProbability
@@ -33,7 +34,7 @@ from pumpagent.runtime.modules.watchlist.manager import WatchlistEntry, Watchlis
 from pumpagent.runtime.modules.watchlist.observation_boundary import (
     build_watchlist_observation_context,
 )
-from pumpagent.runtime.orchestrator.runtime_loop import AgentCycleResult, RuntimeOrchestrator
+from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
 
 
 OBSERVATION_RUNTIME_CYCLE_INPUT_SCHEMA_VERSION = "observation_runtime_cycle_input_v1"
@@ -86,7 +87,7 @@ class ObservationRuntimeCycleResult(SerializableMixin):
     episode_id: str | None
     admission_result: ClosedObservationCycleAdmissionResult | None
     runtime_invoked: bool
-    runtime_result: AgentCycleResult | None
+    runtime_result: RuntimeEvent | None
     runtime_event_id: str | None
     cycle_completion_result: ObservationCycleCompletionResult | None
     resulting_watchlist_entry: WatchlistEntry | None
@@ -110,12 +111,18 @@ class ObservationRuntimeCycleResult(SerializableMixin):
             if self.eligibility_result is not None:
                 raise ValueError("COMPLETED cannot contain an eligibility rejection.")
         elif self.status is ObservationRuntimeCycleStatus.INELIGIBLE:
-            if not self.runtime_invoked or self.eligibility_result is None:
-                raise ValueError("INELIGIBLE requires an eligibility result from Runtime.")
+            if (
+                not self.runtime_invoked
+                or self.eligibility_result is None
+                or self.runtime_result is None
+            ):
+                raise ValueError(
+                    "INELIGIBLE requires canonical Runtime and eligibility results."
+                )
             if self.eligibility_result.eligible:
                 raise ValueError("INELIGIBLE requires a rejected eligibility result.")
-            if self.runtime_result is not None or self.cycle_completion_result is not None:
-                raise ValueError("INELIGIBLE cannot contain successful Runtime or completion results.")
+            if self.cycle_completion_result is not None:
+                raise ValueError("INELIGIBLE cannot contain a completion result.")
             if self.watchlist_changed:
                 raise ValueError("INELIGIBLE cannot change Watchlist state.")
         elif self.watchlist_changed:
@@ -202,24 +209,56 @@ def process_observation_runtime_cycle(
                        f"Runtime failed: {exc}", admission=admission, entry=entry,
                        runtime_invoked=True)
 
-    if isinstance(runtime_result, MarketEligibilityResult):
-        if not runtime_result.eligible:
+    if not isinstance(runtime_result, RuntimeEvent):
+        return _result(
+            value,
+            ObservationRuntimeCycleStatus.RUNTIME_FAILED,
+            "Runtime returned an invalid result contract.",
+            admission=admission,
+            entry=entry,
+            runtime_invoked=True,
+        )
+    if runtime_result.runtime_status is RuntimeStatus.REJECTED:
+        eligibility_result = runtime_result.compatibility_context.get(
+            "eligibility_result"
+        )
+        if isinstance(eligibility_result, MarketEligibilityResult):
             return _result(
                 value,
                 ObservationRuntimeCycleStatus.INELIGIBLE,
-                f"Market eligibility rejected the cycle: {runtime_result.reason.value}.",
+                f"Market eligibility rejected the cycle: {eligibility_result.reason.value}.",
                 admission=admission,
                 entry=entry,
                 runtime_invoked=True,
-                eligibility_result=runtime_result,
+                runtime_result=runtime_result,
+                eligibility_result=eligibility_result,
             )
+        return _result(
+            value,
+            ObservationRuntimeCycleStatus.INELIGIBLE,
+            runtime_result.errors_or_warnings[0],
+            admission=admission,
+            entry=entry,
+            runtime_invoked=True,
+            runtime_result=runtime_result,
+        )
+    if runtime_result.runtime_status is RuntimeStatus.FAILED:
+        return _result(
+            value,
+            ObservationRuntimeCycleStatus.RUNTIME_FAILED,
+            runtime_result.errors_or_warnings[0],
+            admission=admission,
+            entry=entry,
+            runtime_invoked=True,
+            runtime_result=runtime_result,
+        )
 
     invalid_reason = _runtime_invalid_reason(runtime_result, value)
     if invalid_reason is not None:
         return _result(value, ObservationRuntimeCycleStatus.RUNTIME_FAILED, invalid_reason,
                        admission=admission, entry=entry, runtime_invoked=True,
                        runtime_result=(runtime_result
-                                       if isinstance(runtime_result, AgentCycleResult)
+                                       if isinstance(runtime_result, RuntimeEvent)
                                        else None))
 
     try:
@@ -240,7 +279,12 @@ def process_observation_runtime_cycle(
             runtime_event_id=runtime_result.event_id,
             runtime_completion_timestamp=value.runtime_completion_timestamp,
             accepted_closed_candle_timestamp=value.closed_candle_timestamp,
-            runtime_diagnostics={"diagnostic_report_present": runtime_result.diagnostic_report is not None},
+            runtime_diagnostics={
+                "diagnostic_report_present": runtime_result.compatibility_context.get(
+                    "diagnostic_report"
+                )
+                is not None
+            },
             analytical_context=analytical_context,
         )
     )
@@ -263,13 +307,18 @@ def process_observation_runtime_cycle(
 
 
 def _runtime_invalid_reason(result: object, value: ObservationRuntimeCycleInput) -> str | None:
-    if not isinstance(result, AgentCycleResult):
+    if not isinstance(result, RuntimeEvent):
         return "Runtime returned an invalid result contract."
+    if result.runtime_status is not RuntimeStatus.COMPLETED:
+        return "Runtime did not return a completed canonical event."
     if not isinstance(result.event_id, str) or not result.event_id.strip():
         return "Runtime returned an empty event ID."
-    if result.snapshot != value.snapshot or not _same_identity(result.snapshot, value):
+    if result.market_snapshot != value.snapshot or not _same_identity(result.market_snapshot, value):
         return "Runtime result market identity or snapshot does not match the admitted input."
-    if result.timestamp != value.snapshot.timestamp or result.timestamp < value.closed_candle_timestamp:
+    if (
+        result.cycle_timestamp != value.snapshot.timestamp
+        or result.cycle_timestamp < value.closed_candle_timestamp
+    ):
         return "Runtime result timestamp is incompatible with the admitted candle."
     if result.process_evidence is None:
         return "Controlled Runtime returned no Process evidence."
@@ -283,9 +332,9 @@ def _runtime_invalid_reason(result: object, value: ObservationRuntimeCycleInput)
         return "Runtime Process evidence event ID does not align."
     if not _same_identity(result.process_evidence, value):
         return "Runtime Process evidence market identity does not align."
-    if result.hypothesis.event_id != result.event_id:
+    if result.hypothesis_package.event_id != result.event_id:
         return "Runtime Hypothesis event ID does not align."
-    if result.hypothesis.episode_id != result.process_evidence.episode_id:
+    if result.hypothesis_package.episode_id != result.process_evidence.episode_id:
         return "Runtime Hypothesis Episode ID does not align."
     if result.agent_state.event_id != result.event_id:
         return "Runtime Agent State event ID does not align."
@@ -293,29 +342,29 @@ def _runtime_invalid_reason(result: object, value: ObservationRuntimeCycleInput)
         return "Controlled Runtime returned no canonical Scenario Probability."
     if result.scenario_probability.runtime_event_id != result.event_id:
         return "Runtime Scenario Probability event ID does not align."
-    if result.scenario_probability.episode_id != result.hypothesis.episode_id:
+    if result.scenario_probability.episode_id != result.hypothesis_package.episode_id:
         return "Runtime Scenario Probability Episode ID does not align."
     if (
         result.scenario_probability.source_hypothesis_id
-        != result.hypothesis.hypothesis_id
+        != result.hypothesis_package.hypothesis_id
     ):
         return "Runtime Scenario Probability source Hypothesis ID does not align."
     if not isinstance(result.confidence_assessment, ConfidenceAssessment):
         return "Controlled Runtime returned no canonical ConfidenceAssessment."
     if result.confidence_assessment.event_id != result.event_id:
         return "Runtime ConfidenceAssessment event ID does not align."
-    if result.confidence_assessment.episode_id != result.hypothesis.episode_id:
+    if result.confidence_assessment.episode_id != result.hypothesis_package.episode_id:
         return "Runtime ConfidenceAssessment Episode ID does not align."
     if (
         result.confidence_assessment.source_hypothesis_id
-        != result.hypothesis.hypothesis_id
+        != result.hypothesis_package.hypothesis_id
     ):
         return "Runtime ConfidenceAssessment source Hypothesis ID does not align."
     if not isinstance(result.decision_assessment, DecisionAssessment):
         return "Controlled Runtime returned no canonical DecisionAssessment."
     if result.decision_assessment.runtime_event_id != result.event_id:
         return "Runtime Decision event ID does not align."
-    if result.decision_assessment.episode_id != result.hypothesis.episode_id:
+    if result.decision_assessment.episode_id != result.hypothesis_package.episode_id:
         return "Runtime Decision Episode ID does not align."
     if (
         result.decision_assessment.scenario_probability_reference
@@ -328,7 +377,7 @@ def _runtime_invalid_reason(result: object, value: ObservationRuntimeCycleInput)
 def _result(value: ObservationRuntimeCycleInput, status: ObservationRuntimeCycleStatus,
             reason: str, *, admission: ClosedObservationCycleAdmissionResult | None = None,
             entry: WatchlistEntry | None = None, runtime_invoked: bool = False,
-            runtime_result: AgentCycleResult | None = None,
+            runtime_result: RuntimeEvent | None = None,
             completion: ObservationCycleCompletionResult | None = None,
             eligibility_result: MarketEligibilityResult | None = None,
             changed: bool = False) -> ObservationRuntimeCycleResult:
@@ -343,10 +392,25 @@ def _result(value: ObservationRuntimeCycleInput, status: ObservationRuntimeCycle
         request_timestamp=value.runtime_request_timestamp,
         completion_timestamp=value.runtime_completion_timestamp,
         process_evidence=runtime_result.process_evidence if runtime_result else None,
-        process_state=runtime_result.process_state if runtime_result else None,
-        process_transition=runtime_result.process_transition if runtime_result else None,
-        previous_process_evidence_used=(runtime_result.previous_process_evidence_used
-                                        if runtime_result else False),
+        process_state=(
+            runtime_result.process_evidence.current_process_state
+            if runtime_result and runtime_result.process_evidence
+            else None
+        ),
+        process_transition=(
+            runtime_result.process_evidence.detected_transition
+            if runtime_result and runtime_result.process_evidence
+            else None
+        ),
+        previous_process_evidence_used=(
+            bool(
+                runtime_result.compatibility_context.get(
+                    "previous_process_evidence_used", False
+                )
+            )
+            if runtime_result
+            else False
+        ),
         eligibility_result=eligibility_result,
     )
 

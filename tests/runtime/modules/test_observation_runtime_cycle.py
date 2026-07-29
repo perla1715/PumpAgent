@@ -16,6 +16,7 @@ from pumpagent.runtime.domain.enums import (
     DataQualityStatus,
     ObservationEpisodeStatus,
     ProcessDirection,
+    RuntimeStatus,
 )
 from pumpagent.runtime.domain.process_evidence import ProcessState, ProcessTransition
 from pumpagent.runtime.domain.observation_episode import ObservationEpisode
@@ -138,8 +139,8 @@ class ObservationRuntimeCycleTests(TestCase):
             runtime,
         )
 
-        first_hypothesis = first.runtime_result.hypothesis
-        replacement = second.runtime_result.hypothesis
+        first_hypothesis = first.runtime_result.hypothesis_package
+        replacement = second.runtime_result.hypothesis_package
         self.assertIs(
             first_hypothesis.lifecycle_status,
             HypothesisLifecycleStatus.CREATED,
@@ -208,7 +209,8 @@ class ObservationRuntimeCycleTests(TestCase):
         self.assertIs(result.status, ObservationRuntimeCycleStatus.INELIGIBLE)
         self.assertTrue(result.runtime_invoked)
         self.assertEqual(runtime.calls, 1)
-        self.assertIsNone(result.runtime_result)
+        self.assertIsNotNone(result.runtime_result)
+        self.assertIs(result.runtime_result.runtime_status, RuntimeStatus.REJECTED)
         self.assertIsNone(result.cycle_completion_result)
         self.assertIsNotNone(result.eligibility_result)
         self.assertFalse(result.eligibility_result.eligible)
@@ -513,7 +515,7 @@ class ObservationRuntimeCycleTests(TestCase):
             (DecisionReasonCode.UPSTREAM_INHIBITION,),
         )
         self.assertEqual(
-            first.runtime_result.hypothesis.hypothesis_label,
+            first.runtime_result.hypothesis_package.hypothesis_label,
             "No clear hypothesis",
         )
         self.assertIs(first.runtime_result.agent_state.process_direction, ProcessDirection.UP)
@@ -536,7 +538,7 @@ class ObservationRuntimeCycleTests(TestCase):
         )
         self.assertIs(weakening.process_state, ProcessState.WEAKENING)
         self.assertEqual(
-            weakening.runtime_result.hypothesis.hypothesis_label,
+            weakening.runtime_result.hypothesis_package.hypothesis_label,
             "Move is weakening",
         )
         self.assertIs(weakening.runtime_result.agent_state.current_state, AgentStateType.UNKNOWN)
@@ -586,7 +588,7 @@ class ObservationRuntimeCycleTests(TestCase):
         self.assertEqual(first.resulting_watchlist_entry.observation_count, 1)
         self.assertEqual(first.resulting_watchlist_entry.latest_runtime_event_id, first.runtime_event_id)
         self.assertEqual(first.resulting_watchlist_entry.active_episode_id, "episode-BTCUSDT")
-        self.assertEqual(first.runtime_result.new_state, "UNKNOWN")
+        self.assertEqual(first.runtime_result.agent_state.current_state.name, "UNKNOWN")
         self.assertIs(first.resulting_watchlist_entry.current_agent_state, AgentStateType.UNKNOWN)
 
         newer = CANDLE + timedelta(minutes=5)

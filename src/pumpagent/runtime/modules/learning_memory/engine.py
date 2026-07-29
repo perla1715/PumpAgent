@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from pumpagent.runtime.domain import LearningMetadata, RuntimeEvent
-from pumpagent.runtime.domain.enums import ReviewStatus
+from pumpagent.runtime.domain.enums import ReviewStatus, RuntimeStatus
 
 
 class LearningMemoryError(ValueError):
@@ -30,19 +30,24 @@ REQUIRED_EXPORT_EVENT_SECTIONS = (
     "market_snapshot",
     "structural_evidence",
     "market_efficiency_evidence",
+    "process_evidence",
+    "process_quality_assessment",
     "hypothesis_package",
     "agent_state",
+    "scenario_probability",
     "confidence_assessment",
-    "decision_alert",
+    "decision_assessment",
 )
 
 RUNTIME_OWNED_EVENT_ID_SECTIONS = (
     "structural_evidence",
     "market_efficiency_evidence",
+    "process_evidence",
+    "process_quality_assessment",
     "hypothesis_package",
     "agent_state",
     "confidence_assessment",
-    "decision_alert",
+    "decision_assessment",
 )
 
 
@@ -91,6 +96,10 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
         raise LearningMemoryError(
             "RuntimeEvent.learning_metadata must be absent before export."
         )
+    if event.runtime_status is not RuntimeStatus.COMPLETED:
+        raise LearningMemoryError(
+            "Learning Memory requires a completed canonical RuntimeEvent."
+        )
 
     for section in REQUIRED_EXPORT_EVENT_SECTIONS:
         if getattr(event, section) is None:
@@ -102,9 +111,6 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
 
     if event.observation_package is not None:
         _validate_section_event_id(event, "observation_package")
-
-    if event.scenario_probability is None:
-        return LearningMemoryExportCategory.REVIEW_ONLY
 
     _validate_section_event_id(event, "scenario_probability")
     _validate_scenario_source_identity(event)
@@ -137,7 +143,12 @@ def _validate_section_event_id(event: RuntimeEvent, section_name: str) -> None:
     section = getattr(event, section_name)
     section_event_id = (
         section.runtime_event_id
-        if section_name == "scenario_probability"
+        if section_name in {
+            "scenario_probability",
+            "process_evidence",
+            "process_quality_assessment",
+            "decision_assessment",
+        }
         else section.event_id
     )
     if section_event_id != event.event_id:
@@ -193,11 +204,11 @@ def _storage_reason(
             "Runtime behavior change is performed."
         )
 
-    decision_type = event.decision_alert.decision_type.value
+    decision_type = event.decision_assessment.decision_type.value
     return (
         "Completed RuntimeEvent is eligible for future case storage after "
         "human review; "
-        f"Decision / Alert output was {decision_type}. "
+        f"Decision output was {decision_type}. "
         "No persistence, automatic learning, Research Agent trigger, or "
         "Runtime behavior change is performed."
     )

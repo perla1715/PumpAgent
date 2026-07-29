@@ -165,7 +165,7 @@ def build_episode_analytical_context_from_runtime_result(
     _require_active_episode(active_episode)
     _require_aware("accepted_closed_candle_timestamp", accepted_closed_candle_timestamp)
     _require_aware("updated_at", updated_at)
-    snapshot = getattr(runtime_result, "snapshot", None)
+    snapshot = getattr(runtime_result, "market_snapshot", None)
     if snapshot is None or not _same_market(active_episode, snapshot):
         raise ValueError("Runtime result market identity must match the active Episode.")
     event_id = getattr(runtime_result, "event_id", None)
@@ -191,7 +191,7 @@ def build_episode_analytical_context_from_runtime_result(
         latest_process_state=process_evidence.current_process_state,
         latest_process_runtime_event_id=process_evidence.runtime_event_id,
         latest_process_observation_timestamp=process_evidence.observation_timestamp,
-        latest_hypothesis=getattr(runtime_result, "hypothesis", None),
+        latest_hypothesis=getattr(runtime_result, "hypothesis_package", None),
         latest_agent_state=getattr(runtime_result, "agent_state", None),
         latest_scenario_probability=_scenario_probability_from_result(
             runtime_result,
@@ -203,8 +203,16 @@ def build_episode_analytical_context_from_runtime_result(
             event_id=event_id,
             episode_id=active_episode.episode_id,
         ),
-        latest_confidence=getattr(runtime_result, "confidence", None),
-        latest_evidence_summary=getattr(runtime_result, "evidence_summary", None),
+        latest_confidence=getattr(
+            getattr(runtime_result, "compatibility_context", {}),
+            "get",
+            lambda *_: None,
+        )("confidence"),
+        latest_evidence_summary=getattr(
+            getattr(runtime_result, "compatibility_context", {}),
+            "get",
+            lambda *_: None,
+        )("evidence_summary"),
         latest_process_quality_assessment=getattr(
             runtime_result, "process_quality_assessment", None
         ),
@@ -278,7 +286,7 @@ def _scenario_probability_from_result(
     episode_id: str,
 ) -> ScenarioProbability:
     scenario = getattr(runtime_result, "scenario_probability", None)
-    hypothesis = getattr(runtime_result, "hypothesis", None)
+    hypothesis = getattr(runtime_result, "hypothesis_package", None)
     if not isinstance(scenario, ScenarioProbability):
         raise ValueError("Runtime result must contain Scenario Probability.")
     if not isinstance(hypothesis, HypothesisPackage):
@@ -327,7 +335,7 @@ def _confidence_assessment_from_result(
     episode_id: str,
 ) -> ConfidenceAssessment:
     assessment = getattr(runtime_result, "confidence_assessment", None)
-    hypothesis = getattr(runtime_result, "hypothesis", None)
+    hypothesis = getattr(runtime_result, "hypothesis_package", None)
     if not isinstance(assessment, ConfidenceAssessment):
         raise ValueError("Runtime result must contain ConfidenceAssessment.")
     if not isinstance(hypothesis, HypothesisPackage):

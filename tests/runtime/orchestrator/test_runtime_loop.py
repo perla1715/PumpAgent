@@ -22,8 +22,9 @@ if str(SRC) not in sys.path:
 
 from pumpagent.runtime.domain import MarketSnapshot
 from pumpagent.runtime.domain import HypothesisLifecycleStatus, HypothesisPackage
+from pumpagent.runtime.domain import RuntimeEvent
 from pumpagent.runtime.domain.decision import DecisionReasonCode, DecisionType
-from pumpagent.runtime.domain.enums import AgentStateType, DataQualityStatus
+from pumpagent.runtime.domain.enums import AgentStateType, DataQualityStatus, RuntimeStatus
 from pumpagent.runtime.modules.hypothesis import HypothesisHistory
 from pumpagent.runtime.modules.hypothesis import generate_hypothesis_id
 from pumpagent.runtime.modules.temporal_confidence import (
@@ -36,6 +37,7 @@ from pumpagent.runtime.orchestrator import (
     DiagnosticRuntimeReport,
     RuntimeOrchestrator,
     build_diagnostic_runtime_report,
+    project_agent_cycle_result,
     run_agent_cycle as _run_agent_cycle,
 )
 
@@ -44,9 +46,10 @@ TEST_EPISODE_ID = "episode-runtime-test"
 
 
 def run_agent_cycle(snapshot: MarketSnapshot, **kwargs: object) -> AgentCycleResult:
-    result = _run_agent_cycle(snapshot, episode_id=TEST_EPISODE_ID, **kwargs)
-    assert isinstance(result, AgentCycleResult)
-    return result
+    event = _run_agent_cycle(snapshot, episode_id=TEST_EPISODE_ID, **kwargs)
+    assert isinstance(event, RuntimeEvent)
+    assert event.runtime_status is RuntimeStatus.COMPLETED
+    return project_agent_cycle_result(event)
 
 
 def make_snapshot(
@@ -113,6 +116,33 @@ def next_snapshot(**kwargs: object) -> MarketSnapshot:
 
 
 class RuntimeLoopTests(unittest.TestCase):
+    def test_production_runtime_returns_completed_runtime_event(self) -> None:
+        event = RuntimeOrchestrator().process_market_update(
+            make_snapshot(), episode_id=TEST_EPISODE_ID
+        )
+
+        self.assertIsInstance(event, RuntimeEvent)
+        self.assertIs(event.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertIsNotNone(event.decision_assessment)
+
+    def test_compatibility_projection_is_deterministic_and_one_way(self) -> None:
+        event = RuntimeOrchestrator().process_market_update(
+            make_snapshot(), episode_id=TEST_EPISODE_ID
+        )
+
+        first = project_agent_cycle_result(event)
+        second = project_agent_cycle_result(event)
+
+        self.assertEqual(first, second)
+        self.assertEqual(event.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertFalse(hasattr(first, "to_runtime_event"))
+
+    def test_compatibility_projection_rejects_non_completed_event(self) -> None:
+        failed = RuntimeOrchestrator().process_market_update(make_snapshot())
+
+        with self.assertRaisesRegex(ValueError, "completed RuntimeEvent"):
+            project_agent_cycle_result(failed)
+
     def test_confidence_executes_once_after_scenario_probability(self) -> None:
         order: list[str] = []
 
@@ -169,8 +199,10 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertNotIn("calculate_confidence", RUNTIME_LOOP.read_text(encoding="utf-8"))
 
     def test_direct_runtime_requires_lifecycle_owned_episode_id(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Lifecycle-owned episode_id"):
-            RuntimeOrchestrator().process_market_update(make_snapshot())
+        event = RuntimeOrchestrator().process_market_update(make_snapshot())
+
+        self.assertIs(event.runtime_status, RuntimeStatus.FAILED)
+        self.assertIn("Lifecycle-owned episode_id", event.errors_or_warnings[0])
 
     def test_production_hypothesis_generator_returns_uuid4(self) -> None:
         generated = generate_hypothesis_id()
@@ -216,10 +248,10 @@ class RuntimeLoopTests(unittest.TestCase):
     ) -> None:
         generated = iter(("opaque-hypothesis-1", "unused-hypothesis-2"))
         runtime = RuntimeOrchestrator(hypothesis_id_generator=lambda: next(generated))
-        first = runtime.process_market_update(
+        first = project_agent_cycle_result(runtime.process_market_update(
             make_snapshot(), episode_id=TEST_EPISODE_ID
-        )
-        stronger = runtime.process_market_update(
+        ))
+        stronger = project_agent_cycle_result(runtime.process_market_update(
             next_snapshot(
                 price_change_1m=2.1,
                 volume_spike_ratio=10.1,
@@ -227,13 +259,13 @@ class RuntimeLoopTests(unittest.TestCase):
             ),
             episode_id=TEST_EPISODE_ID,
             previous_hypothesis=first.hypothesis,
-        )
+        ))
         later = replace(next_snapshot(), event_id="snapshot-3")
-        weaker = runtime.process_market_update(
+        weaker = project_agent_cycle_result(runtime.process_market_update(
             later,
             episode_id=TEST_EPISODE_ID,
             previous_hypothesis=stronger.hypothesis,
-        )
+        ))
 
         self.assertIsInstance(first.hypothesis, HypothesisPackage)
         self.assertIs(
@@ -266,20 +298,21 @@ class RuntimeLoopTests(unittest.TestCase):
     def test_hypothesis_continuity_cannot_cross_episode_boundaries(self) -> None:
         generated = iter(("episode-one-hypothesis", "episode-two-hypothesis"))
         runtime = RuntimeOrchestrator(hypothesis_id_generator=lambda: next(generated))
-        first = runtime.process_market_update(
+        first = project_agent_cycle_result(runtime.process_market_update(
             make_snapshot(), episode_id="episode-one"
-        )
+        ))
 
-        with self.assertRaisesRegex(ValueError, "cross Episode boundaries"):
-            runtime.process_market_update(
+        failed = runtime.process_market_update(
                 next_snapshot(),
                 episode_id="episode-two",
                 previous_hypothesis=first.hypothesis,
-            )
-
-        second = runtime.process_market_update(
-            next_snapshot(), episode_id="episode-two"
         )
+        self.assertIs(failed.runtime_status, RuntimeStatus.FAILED)
+        self.assertIn("cross Episode boundaries", failed.errors_or_warnings[0])
+
+        second = project_agent_cycle_result(runtime.process_market_update(
+            next_snapshot(), episode_id="episode-two"
+        ))
         self.assertIs(
             second.hypothesis.lifecycle_status,
             HypothesisLifecycleStatus.CREATED,
@@ -428,9 +461,9 @@ class RuntimeLoopTests(unittest.TestCase):
     def test_missing_data(self) -> None:
         snapshot = make_snapshot(include_market_metrics=False)
 
-        result = RuntimeOrchestrator().process_market_update(
+        result = project_agent_cycle_result(RuntimeOrchestrator().process_market_update(
             snapshot, episode_id=TEST_EPISODE_ID
-        )
+        ))
 
         self.assertEqual(result.new_state, "UNKNOWN")
         self.assertEqual(result.agent_state.current_state, AgentStateType.UNKNOWN)
@@ -540,13 +573,13 @@ class RuntimeLoopTests(unittest.TestCase):
         orchestrator = RuntimeOrchestrator()
         snapshot = make_snapshot()
 
-        first = orchestrator.process_market_update(snapshot, episode_id=TEST_EPISODE_ID)
-        second = orchestrator.process_market_update(
+        first = project_agent_cycle_result(orchestrator.process_market_update(snapshot, episode_id=TEST_EPISODE_ID))
+        second = project_agent_cycle_result(orchestrator.process_market_update(
             next_snapshot(),
             previous_state=first.new_state,
             previous_hypothesis=first.hypothesis,
             episode_id=TEST_EPISODE_ID,
-        )
+        ))
         entry = orchestrator.watchlist.get(
             symbol="BTCUSDT",
             exchange="binance",
@@ -569,15 +602,15 @@ class RuntimeLoopTests(unittest.TestCase):
 
     def test_runtime_hypothesis_history_respects_limit(self) -> None:
         orchestrator = RuntimeOrchestrator(hypothesis_history=HypothesisHistory(max_length=1))
-        first = orchestrator.process_market_update(
+        first = project_agent_cycle_result(orchestrator.process_market_update(
             make_snapshot(), episode_id=TEST_EPISODE_ID
-        )
-        second = orchestrator.process_market_update(
+        ))
+        second = project_agent_cycle_result(orchestrator.process_market_update(
             next_snapshot(),
             previous_state=first.new_state,
             previous_hypothesis=first.hypothesis,
             episode_id=TEST_EPISODE_ID,
-        )
+        ))
 
         self.assertEqual(first.hypothesis_history_size, 1)
         self.assertEqual(second.hypothesis_history_size, 1)
@@ -586,11 +619,11 @@ class RuntimeLoopTests(unittest.TestCase):
 
     def test_runtime_temporal_confidence_improves(self) -> None:
         orchestrator = RuntimeOrchestrator()
-        first = orchestrator.process_market_update(
+        first = project_agent_cycle_result(orchestrator.process_market_update(
             make_snapshot(), episode_id=TEST_EPISODE_ID
-        )
+        ))
 
-        second = orchestrator.process_market_update(
+        second = project_agent_cycle_result(orchestrator.process_market_update(
             next_snapshot(
                 price_change_1m=2.1,
                 price_change_3m=2.5,
@@ -600,7 +633,7 @@ class RuntimeLoopTests(unittest.TestCase):
             previous_state=first.new_state,
             previous_hypothesis=first.hypothesis,
             episode_id=TEST_EPISODE_ID,
-        )
+        ))
 
         self.assertEqual(second.confidence, 90)
         self.assertIsNone(second.confidence_delta)
@@ -608,7 +641,7 @@ class RuntimeLoopTests(unittest.TestCase):
 
     def test_runtime_temporal_confidence_weakens(self) -> None:
         orchestrator = RuntimeOrchestrator()
-        first = orchestrator.process_market_update(
+        first = project_agent_cycle_result(orchestrator.process_market_update(
             make_snapshot(
                 price_change_1m=2.1,
                 price_change_3m=2.5,
@@ -616,14 +649,14 @@ class RuntimeLoopTests(unittest.TestCase):
                 oi_change_1m=2.1,
             ),
             episode_id=TEST_EPISODE_ID,
-        )
+        ))
 
-        second = orchestrator.process_market_update(
+        second = project_agent_cycle_result(orchestrator.process_market_update(
             next_snapshot(),
             previous_state=first.new_state,
             previous_hypothesis=first.hypothesis,
             episode_id=TEST_EPISODE_ID,
-        )
+        ))
 
         self.assertEqual(second.confidence, 50)
         self.assertIsNone(second.confidence_delta)
