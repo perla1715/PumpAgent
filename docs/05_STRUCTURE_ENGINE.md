@@ -57,8 +57,11 @@ Structure Engine MVP output from normalized observations.
 `add_structural_evidence()` remains available for the existing immutable
 `RuntimeEvent` handoff path.
 
-`refine_structural_evidence()` remains available for compatibility with
-Perception-produced evidence validation.
+`refine_structural_evidence()` validates already-present externally supplied
+evidence for immutable RuntimeEvent handoff. It does not construct or replace
+evidence.
+
+Structure Engine is the sole production owner of `StructuralEvidence`.
 
 ---
 

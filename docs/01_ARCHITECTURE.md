@@ -275,27 +275,22 @@ run asynchronously.
 
 Perception Engine v0.1 is implemented as a Runtime-safe MVP.
 
-The clean Perception evidence pipeline reads only `MarketSnapshot` and produces
-objective evidence contracts:
+Perception reads `MarketSnapshot` and produces normalized observations:
 
 MarketSnapshot
 
 ↓
 
-StructuralEvidence + MarketEfficiencyEvidence
+ObservationPackage
 
-The primary clean evidence API is:
-
-- `build_perception_evidence()`
-
-Perception also exposes ObservationPackage preparation APIs:
+The public Perception preparation APIs are:
 
 - `build_observation_package()`
 - `add_observation_package()`
 
-`ObservationPackage` is currently part of the public Perception output and
-prepares normalized Runtime-facing market data for downstream modules such as
-Structure.
+`ObservationPackage` is the sole canonical Perception output for the analytical
+pipeline. It prepares normalized Runtime-facing data for the specialized
+Structure and Market Efficiency engines.
 
 The clean Perception evidence pipeline does not perform market interpretation.
 
@@ -321,7 +316,7 @@ Perception also retains a legacy scanner compatibility layer:
 
 Scanner state labels, `CONF` formatting, and market-state scan output belong
 only to that legacy compatibility layer. They are not part of
-`build_perception_evidence()` or `build_observation_package()`.
+`build_observation_package()`.
 
 Structure Engine has an implemented MVP that can build objective
 `StructuralEvidence` from `ObservationPackage.normalized_ohlcv` without adding
@@ -341,12 +336,23 @@ Market Efficiency Engine has an implemented MVP that builds objective
 `MarketEfficiencyEvidence` from `ObservationPackage` without adding
 interpretation.
 
-## MVP Refinement Contract
+## MVP Evidence Ownership Contract
 
-Perception owns clean observation packaging and may still create evidence for
-legacy compatibility.
+Perception exclusively owns `ObservationPackage` construction. It does not
+construct final evidence contracts.
 
-Structure Engine and Market Efficiency Engine do not replace evidence ownership.
+Structure Engine exclusively owns production construction of
+`StructuralEvidence`. Market Efficiency Engine exclusively owns production
+construction of `MarketEfficiencyEvidence`.
+
+The Main Runtime and fixture Runtime both execute:
+
+`MarketSnapshot` -> `ObservationPackage` -> `StructuralEvidence` ->
+`MarketEfficiencyEvidence`
+
+The specialized engines retain validation of already-present evidence for
+immutable RuntimeEvent handoff, but that validation does not construct or
+replace evidence.
 
 They may refine evidence by returning an updated evidence object of the same
 domain type:

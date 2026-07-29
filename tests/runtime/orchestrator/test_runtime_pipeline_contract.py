@@ -23,7 +23,9 @@ from pumpagent.runtime.modules.confidence import add_confidence_assessment
 from pumpagent.runtime.modules.decision_alert import add_decision_alert
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
-from pumpagent.runtime.modules.perception import add_perception_evidence
+from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
+from pumpagent.runtime.modules.perception import add_observation_package
+from pumpagent.runtime.modules.structure import add_structural_evidence
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 
 
@@ -97,8 +99,18 @@ class RuntimePipelineContractTests(unittest.TestCase):
             ),
             (
                 "Perception",
-                ("structural_evidence", "market_efficiency_evidence"),
-                add_perception_evidence,
+                ("observation_package",),
+                add_observation_package,
+            ),
+            (
+                "Structure",
+                ("structural_evidence",),
+                add_structural_evidence,
+            ),
+            (
+                "Market Efficiency",
+                ("market_efficiency_evidence",),
+                add_market_efficiency_evidence,
             ),
             ("Hypothesis", ("hypothesis_package",), add_hypothesis_package),
             ("Agent State", ("agent_state",), add_agent_state),

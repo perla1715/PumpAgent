@@ -1,6 +1,6 @@
 """Structure Engine MVP.
 
-Structure produces or refines objective structural evidence.
+Structure produces or validates objective structural evidence.
 It remains evidence-only and does not own downstream Runtime reasoning.
 """
 
@@ -78,7 +78,7 @@ def refine_structural_evidence(
     *,
     runtime_event_id: str | None = None,
 ) -> StructuralEvidence:
-    """Validate Perception-produced StructuralEvidence without interpretation."""
+    """Validate externally supplied StructuralEvidence without interpretation."""
 
     event_id = runtime_event_id or evidence.event_id
     if evidence.event_id != event_id:

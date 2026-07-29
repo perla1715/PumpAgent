@@ -55,8 +55,8 @@ The current MVP:
 - records available and missing participation metrics;
 - stores raw context values for volume, Open Interest, Funding Rate, CVD, and
   liquidations when present;
-- can validate existing Perception-produced `MarketEfficiencyEvidence` through
-  the compatibility refinement path;
+- can validate already-present externally supplied `MarketEfficiencyEvidence`
+  through the refinement path;
 - preserves source observation identity stored in `market_mechanics_context`;
 - remains deterministic;
 - remains side-effect free;
@@ -65,9 +65,9 @@ The current MVP:
 - does not create hypotheses, states, probabilities, trading confidence,
   decisions, trading signals, or alerts.
 
-Refinement must not change ownership of the evidence.
-
-Perception may still create `MarketEfficiencyEvidence` for compatibility.
+Refinement does not construct or replace evidence and therefore does not change
+ownership. Market Efficiency Engine is the sole production owner of
+`MarketEfficiencyEvidence`; Perception cannot construct it.
 
 The cleaner current path is:
 
