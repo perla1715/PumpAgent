@@ -116,6 +116,69 @@ def next_snapshot(**kwargs: object) -> MarketSnapshot:
 
 
 class RuntimeLoopTests(unittest.TestCase):
+    def test_late_failures_rollback_each_runtime_owned_continuity_stage(self) -> None:
+        def assert_unchanged(runtime: RuntimeOrchestrator) -> None:
+            self.assertEqual(runtime.watchlist.list_active(), ())
+            self.assertEqual(runtime.temporal_confidence._states, {})  # noqa: SLF001
+            self.assertEqual(runtime.hypothesis_history.size(), 0)
+
+        runtime = RuntimeOrchestrator()
+
+        def mutate_watchlist(**kwargs):  # type: ignore[no-untyped-def]
+            runtime.watchlist.register(
+                symbol=kwargs["symbol"],
+                exchange=kwargs["exchange"],
+                timeframe=kwargs["timeframe"],
+                timestamp=kwargs["timestamp"],
+                current_agent_state=kwargs["agent_state"].current_state,
+                hypothesis_id=kwargs["hypothesis"].hypothesis_id,
+                confidence=kwargs["confidence"],
+                event_id=kwargs["event_id"],
+            )
+            return "REGISTERED", 1
+
+        with mock.patch.object(
+            runtime.watchlist, "track_cycle", side_effect=mutate_watchlist
+        ), mock.patch(
+            "pumpagent.runtime.orchestrator.runtime_loop._update_temporal_confidence",
+            side_effect=RuntimeError("after watchlist"),
+        ):
+            event = runtime.process_market_update(
+                make_snapshot(), episode_id=TEST_EPISODE_ID
+            )
+        self.assertIs(event.runtime_status, RuntimeStatus.FAILED)
+        assert_unchanged(runtime)
+
+        def mutate_temporal(*_args):  # type: ignore[no-untyped-def]
+            runtime.temporal_confidence._states[  # noqa: SLF001
+                ("binance", "BTCUSDT", "1m")
+            ] = mock.sentinel.temporal
+            return None
+
+        with mock.patch(
+            "pumpagent.runtime.orchestrator.runtime_loop._update_temporal_confidence",
+            side_effect=mutate_temporal,
+        ), mock.patch(
+            "pumpagent.runtime.orchestrator.runtime_loop.aggregate_evidence_score",
+            side_effect=RuntimeError("after temporal confidence"),
+        ):
+            event = runtime.process_market_update(
+                make_snapshot(), episode_id=TEST_EPISODE_ID
+            )
+        self.assertIs(event.runtime_status, RuntimeStatus.FAILED)
+        assert_unchanged(runtime)
+
+        with mock.patch(
+            "pumpagent.runtime.orchestrator.runtime_loop."
+            "build_diagnostic_runtime_report",
+            side_effect=RuntimeError("after hypothesis history"),
+        ):
+            event = runtime.process_market_update(
+                make_snapshot(), episode_id=TEST_EPISODE_ID
+            )
+        self.assertIs(event.runtime_status, RuntimeStatus.FAILED)
+        assert_unchanged(runtime)
+
     def test_production_runtime_returns_completed_runtime_event(self) -> None:
         event = RuntimeOrchestrator().process_market_update(
             make_snapshot(), episode_id=TEST_EPISODE_ID

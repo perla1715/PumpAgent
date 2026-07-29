@@ -168,7 +168,23 @@ MarketSnapshot
 
 ↓
 
-StructuralEvidence + MarketEfficiencyEvidence
+ObservationPackage
+
+↓
+
+StructuralEvidence
+
+↓
+
+MarketEfficiencyEvidence
+
+↓
+
+ProcessEvidence
+
+↓
+
+ProcessQualityAssessment + Healthy Baseline continuity
 
 ↓
 
@@ -188,16 +204,23 @@ ConfidenceAssessment
 
 ↓
 
-DecisionAlert
+DecisionAssessment
 
-Each module in this contract path is deterministic, side-effect free, and owns
-exactly one RuntimeEvent section.
+↓
 
-No module in this contract path mutates previous sections.
+completed RuntimeEvent
+
+`RuntimeOrchestrator.process_market_update()` is the single production
+analytical orchestration path. It returns canonical `RuntimeEvent` outcomes:
+`COMPLETED`, `REJECTED`, or `FAILED`.
+
+`COMPLETED` is the only terminal-success Runtime status. The legacy
+`FINALIZED` status is retired and is not a public success alias.
 
 ## Agent Runtime Loop MVP
 
-The first complete agent reasoning cycle returns `AgentCycleResult` with:
+The complete production reasoning cycle returns a completed `RuntimeEvent`.
+`AgentCycleResult` exposes the following historical diagnostic view:
 
 - runtime event id;
 - snapshot;
@@ -245,7 +268,12 @@ Hypothesis logic, alerts, probabilities, or trading decisions.
 
 Runtime logging is currently a side-effect-free serialization layer.
 
-`serialize_agent_cycle_result(result)` converts an `AgentCycleResult` into a
+`serialize_runtime_event(event)` is the canonical persistence and logging
+boundary. It revalidates the aggregate before serializing every canonical
+section.
+
+`serialize_agent_cycle_result(result)` converts the deprecated compatibility
+projection into a
 plain dictionary with cycle identity, timestamp, market identity, state,
 hypothesis, Scenario Probability, canonical ConfidenceAssessment, temporary
 explanation-confidence compatibility score, evidence, and Agent State identity
@@ -295,7 +323,10 @@ markets across runtime cycles.
 
 Runtime order:
 
-`Runtime -> Watchlist -> Temporal Confidence -> AgentCycleResult`
+`Runtime -> Watchlist -> Temporal Confidence -> completed RuntimeEvent`
+
+The temporal fields exposed by `AgentCycleResult` are a one-way compatibility
+projection from that completed event.
 
 Temporal confidence compares the previous confidence for a watchlist entry with
 the current confidence and reports:
@@ -827,17 +858,20 @@ In the MVP, Evidence supports scanner output and is not yet a dedicated
 
 ---
 
-## 8. Decision / Alert
+## 8. Decision
 
 Produces non-execution operational outputs.
 
-Decision / Alert v0.1 translates official Runtime reasoning into conservative
-human attention guidance:
+The canonical Decision Engine stores a non-execution `DecisionAssessment` in
+RuntimeEvent. The separate legacy DecisionAlert contract translates older
+Runtime reasoning into conservative human attention guidance:
 
 `AgentState + ScenarioProbability + ConfidenceAssessment` -> `DecisionAlert`
 
 It does not reinterpret market data, inspect raw metrics, infer trades, decide
 execution, call Telegram, persist state, or access Learning Memory.
+
+DecisionAlert is not the canonical production Runtime terminal result.
 
 Current MVP policy:
 

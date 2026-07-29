@@ -8,6 +8,7 @@ from pathlib import Path
 import warnings
 
 from pumpagent.runtime.domain import RuntimeEvent
+from pumpagent.runtime.domain.enums import RuntimeStatus
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
 
@@ -55,6 +56,10 @@ def run_fixture_runtime_cycle(
         raise ValueError(
             "Learning Memory is outside the Runtime Orchestrator boundary."
         )
+    if run_scenario_probability or run_confidence or run_decision_alert:
+        raise ValueError(
+            "Fixture Runtime stages after Agent State are retired."
+        )
     stage = _resolve_target_stage(
         target_stage=target_stage,
         flags=(
@@ -63,9 +68,6 @@ def run_fixture_runtime_cycle(
             run_market_efficiency,
             run_hypothesis,
             run_agent_state,
-            run_scenario_probability,
-            run_confidence,
-            run_decision_alert,
         ),
     )
     input_event = RuntimeEvent(
@@ -79,6 +81,14 @@ def run_fixture_runtime_cycle(
     input_event = add_market_snapshot_from_fixture(input_event, fixture_path)
     if stage is FixtureRuntimeStage.MARKET_DATA:
         return input_event
+    if stage in {
+        FixtureRuntimeStage.SCENARIO_PROBABILITY,
+        FixtureRuntimeStage.CONFIDENCE,
+        FixtureRuntimeStage.DECISION_ALERT,
+    }:
+        raise ValueError(
+            "Fixture Runtime stages after Agent State are retired."
+        )
 
     warnings.warn(
         "Fixture stage selection is deprecated; analytical fixture execution "
@@ -86,15 +96,42 @@ def run_fixture_runtime_cycle(
         DeprecationWarning,
         stacklevel=2,
     )
-    if not isinstance(episode_id, str) or not episode_id.strip():
-        raise ValueError("episode_id is required for canonical fixture execution.")
-    if not isinstance(hypothesis_id, str) or not hypothesis_id.strip():
-        raise ValueError("hypothesis_id is required for canonical fixture execution.")
+    requires_hypothesis = stage in {
+        FixtureRuntimeStage.HYPOTHESIS,
+        FixtureRuntimeStage.AGENT_STATE,
+    }
+    if requires_hypothesis and (
+        not isinstance(episode_id, str) or not episode_id.strip()
+    ):
+        raise ValueError("episode_id is required for the Hypothesis stage.")
+    if requires_hypothesis and (
+        not isinstance(hypothesis_id, str) or not hypothesis_id.strip()
+    ):
+        raise ValueError("hypothesis_id is required for the Hypothesis stage.")
 
-    runtime = RuntimeOrchestrator(hypothesis_id_generator=lambda: hypothesis_id)
-    return runtime.process_market_update(
+    compatibility_episode_id = episode_id or f"fixture-episode:{event_id}"
+    compatibility_hypothesis_id = (
+        hypothesis_id or f"fixture-hypothesis:{event_id}"
+    )
+    runtime = RuntimeOrchestrator(
+        hypothesis_id_generator=lambda: compatibility_hypothesis_id
+    )
+    completed = runtime.process_market_update(
         input_event.market_snapshot,
-        episode_id=episode_id,
+        episode_id=compatibility_episode_id,
+        runtime_event_id=event_id,
+    )
+    if completed.runtime_status is not RuntimeStatus.COMPLETED:
+        raise ValueError(
+            "Canonical fixture delegation did not complete: "
+            + ", ".join(completed.errors_or_warnings)
+        )
+    runtime.commit_runtime_continuity(completed.event_id)
+    return _project_fixture_stage(
+        completed,
+        stage=stage,
+        schema_version=schema_version,
+        cycle_timestamp=cycle_timestamp,
     )
 
 
@@ -120,8 +157,70 @@ def _resolve_target_stage(
             if requested is FixtureRuntimeStage.PERCEPTION
             else requested
         )
-    return (
-        FixtureRuntimeStage.DECISION_ALERT
-        if any(flags)
-        else FixtureRuntimeStage.MARKET_DATA
+    stages = (
+        FixtureRuntimeStage.OBSERVATION_PACKAGE,
+        FixtureRuntimeStage.STRUCTURE,
+        FixtureRuntimeStage.MARKET_EFFICIENCY,
+        FixtureRuntimeStage.HYPOTHESIS,
+        FixtureRuntimeStage.AGENT_STATE,
+    )
+    selected = FixtureRuntimeStage.MARKET_DATA
+    for enabled, stage in zip(flags, stages):
+        if enabled:
+            selected = stage
+    return selected
+
+
+def _project_fixture_stage(
+    completed: RuntimeEvent,
+    *,
+    stage: FixtureRuntimeStage,
+    schema_version: str,
+    cycle_timestamp: datetime,
+) -> RuntimeEvent:
+    """Project legacy partial sections from one canonical delegated execution."""
+
+    order = (
+        FixtureRuntimeStage.OBSERVATION_PACKAGE,
+        FixtureRuntimeStage.STRUCTURE,
+        FixtureRuntimeStage.MARKET_EFFICIENCY,
+        FixtureRuntimeStage.HYPOTHESIS,
+        FixtureRuntimeStage.AGENT_STATE,
+    )
+    reached = order.index(stage)
+    return RuntimeEvent(
+        event_id=completed.event_id,
+        schema_version=schema_version,
+        cycle_timestamp=cycle_timestamp,
+        symbol=completed.symbol,
+        exchange=completed.exchange,
+        timeframe=completed.timeframe,
+        episode_id=(
+            completed.episode_id
+            if reached >= order.index(FixtureRuntimeStage.HYPOTHESIS)
+            else None
+        ),
+        runtime_status=RuntimeStatus.CREATED,
+        market_snapshot=completed.market_snapshot,
+        observation_package=completed.observation_package,
+        structural_evidence=(
+            completed.structural_evidence
+            if reached >= order.index(FixtureRuntimeStage.STRUCTURE)
+            else None
+        ),
+        market_efficiency_evidence=(
+            completed.market_efficiency_evidence
+            if reached >= order.index(FixtureRuntimeStage.MARKET_EFFICIENCY)
+            else None
+        ),
+        hypothesis_package=(
+            completed.hypothesis_package
+            if reached >= order.index(FixtureRuntimeStage.HYPOTHESIS)
+            else None
+        ),
+        agent_state=(
+            completed.agent_state
+            if reached >= order.index(FixtureRuntimeStage.AGENT_STATE)
+            else None
+        ),
     )

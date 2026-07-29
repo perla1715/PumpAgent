@@ -160,10 +160,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
                     )
                 else:
                     mismatched_section = replace(section_value, event_id="other-event")
-                mismatched_event = event.with_sections(**{section: mismatched_section})
-
-                with self.assertRaisesRegex(LearningMemoryError, section):
-                    build_learning_metadata(mismatched_event, created_at=NOW)
+                with self.assertRaisesRegex(ValueError, section):
+                    event.with_sections(**{section: mismatched_section})
 
     def test_learning_memory_allows_source_specific_market_snapshot_event_id(
         self,
@@ -180,10 +178,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
     ) -> None:
         event = make_event_with_decision_alert()
         mismatched_snapshot = replace(event.market_snapshot, symbol="ETHUSDT")
-        mismatched_event = event.with_sections(market_snapshot=mismatched_snapshot)
-
-        with self.assertRaisesRegex(LearningMemoryError, "symbol"):
-            build_learning_metadata(mismatched_event, created_at=NOW)
+        with self.assertRaisesRegex(ValueError, "market_snapshot"):
+            event.with_sections(market_snapshot=mismatched_snapshot)
 
     def test_learning_memory_produces_valid_learning_metadata(self) -> None:
         event = make_event_with_decision_alert()
@@ -207,11 +203,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
         event = make_event_with_decision_alert()
         observation = replace(event.observation_package, event_id="other-event")
 
-        with self.assertRaisesRegex(LearningMemoryError, "observation_package"):
-            build_learning_metadata(
-                event.with_sections(observation_package=observation),
-                created_at=NOW,
-            )
+        with self.assertRaisesRegex(ValueError, "observation_package"):
+            event.with_sections(observation_package=observation)
 
     def test_present_scenario_probability_event_id_is_validated(self) -> None:
         event = make_event_with_decision_alert()
@@ -220,11 +213,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
             "other-event",
         )
 
-        with self.assertRaisesRegex(LearningMemoryError, "scenario_probability"):
-            build_learning_metadata(
-                event.with_sections(scenario_probability=scenario),
-                created_at=NOW,
-            )
+        with self.assertRaisesRegex(ValueError, "scenario_probability"):
+            event.with_sections(scenario_probability=scenario)
 
     def test_scenario_probability_source_identities_are_validated(self) -> None:
         event = make_event_with_decision_alert()
@@ -237,11 +227,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
             with self.subTest(field_name=field_name):
                 scenario = copy.copy(event.scenario_probability)
                 object.__setattr__(scenario, field_name, value)
-                with self.assertRaisesRegex(LearningMemoryError, field_name):
-                    build_learning_metadata(
-                        event.with_sections(scenario_probability=scenario),
-                        created_at=NOW,
-                    )
+                with self.assertRaisesRegex(ValueError, "scenario_probability"):
+                    event.with_sections(scenario_probability=scenario)
 
     def test_confidence_assessment_source_identities_are_validated(self) -> None:
         event = make_event_with_decision_alert()
@@ -256,11 +243,8 @@ class LearningMemoryEngineTests(unittest.TestCase):
                     event.confidence_assessment,
                     **{field_name: value},
                 )
-                with self.assertRaisesRegex(LearningMemoryError, field_name):
-                    build_learning_metadata(
-                        event.with_sections(confidence_assessment=confidence),
-                        created_at=NOW,
-                    )
+                with self.assertRaisesRegex(ValueError, "confidence_assessment"):
+                    event.with_sections(confidence_assessment=confidence)
 
     def test_missing_scenario_probability_is_review_only(self) -> None:
         with self.assertRaisesRegex(ValueError, "scenario_probability"):

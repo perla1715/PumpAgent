@@ -17,7 +17,6 @@ class RuntimeStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     REJECTED = "rejected"
-    FINALIZED = "finalized"
     FAILED = "failed"
 
 

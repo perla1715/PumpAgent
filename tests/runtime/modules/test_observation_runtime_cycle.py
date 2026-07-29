@@ -643,6 +643,7 @@ class ObservationRuntimeCycleTests(TestCase):
         manager = manager_with(active_entry())
         before = manager.list_active()
         runtime = CountingRuntime()
+        history_before = runtime.hypothesis_history.size()
         baseline = process_observation_runtime_cycle(
             cycle(snapshot()), manager_with(active_entry()), CountingRuntime()
         ).cycle_completion_result
@@ -660,6 +661,9 @@ class ObservationRuntimeCycleTests(TestCase):
         prepare.assert_called_once()
         self.assertIs(rejected.status, ObservationRuntimeCycleStatus.COMPLETION_REJECTED)
         self.assertEqual(manager.list_active(), before)
+        self.assertEqual(runtime.hypothesis_history.size(), history_before)
+        self.assertEqual(runtime.watchlist.list_active(), ())
+        self.assertEqual(runtime.temporal_confidence._states, {})  # noqa: SLF001
 
     def test_episode_rebind_clears_legacy_global_history_and_result_serializes(self) -> None:
         runtime = CountingRuntime()

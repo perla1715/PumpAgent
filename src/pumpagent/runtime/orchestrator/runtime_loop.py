@@ -7,6 +7,7 @@ effects.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable
 from typing import Any
@@ -87,6 +88,13 @@ from pumpagent.runtime.orchestrator.cycle_projection import (
 )
 
 
+@dataclass(frozen=True)
+class _ContinuitySnapshot:
+    watchlist_entries: dict[tuple[str, str, str], object]
+    temporal_states: dict[tuple[str, str, str], object]
+    hypothesis_snapshots: tuple[HypothesisSnapshot, ...]
+
+
 class RuntimeOrchestrator:
     """Coordinate one side-effect-free agent reasoning cycle."""
 
@@ -104,6 +112,7 @@ class RuntimeOrchestrator:
         self.market_eligibility_filter = market_eligibility_filter or MarketEligibilityFilter()
         self.hypothesis_id_generator = hypothesis_id_generator
         self._observation_episode_id: str | None = None
+        self._pending_continuity: dict[str, _ContinuitySnapshot] = {}
 
     def bind_observation_episode(self, episode_id: str) -> None:
         """Keep mutable analytical helpers isolated to one Observation Episode.
@@ -120,6 +129,37 @@ class RuntimeOrchestrator:
         self.temporal_confidence = TemporalConfidenceManager()
         self.hypothesis_history = HypothesisHistory()
         self._observation_episode_id = episode_id
+        self._pending_continuity.clear()
+
+    def commit_runtime_continuity(self, runtime_event_id: str) -> None:
+        """Commit already-staged continuity after external cycle completion."""
+
+        self._pending_continuity.pop(runtime_event_id, None)
+
+    def rollback_runtime_continuity(self, runtime_event_id: str) -> None:
+        """Restore continuity staged by a completed but uncommitted cycle."""
+
+        snapshot = self._pending_continuity.pop(runtime_event_id, None)
+        if snapshot is not None:
+            self._restore_continuity(snapshot)
+
+    def _snapshot_continuity(self) -> _ContinuitySnapshot:
+        return _ContinuitySnapshot(
+            watchlist_entries=dict(self.watchlist._entries),  # noqa: SLF001
+            temporal_states=dict(self.temporal_confidence._states),  # noqa: SLF001
+            hypothesis_snapshots=tuple(
+                self.hypothesis_history._snapshots  # noqa: SLF001
+            ),
+        )
+
+    def _restore_continuity(self, snapshot: _ContinuitySnapshot) -> None:
+        self.watchlist._entries = dict(snapshot.watchlist_entries)  # noqa: SLF001
+        self.temporal_confidence._states = dict(  # noqa: SLF001
+            snapshot.temporal_states
+        )
+        self.hypothesis_history._snapshots = list(  # noqa: SLF001
+            snapshot.hypothesis_snapshots
+        )
 
     def process_market_update(
         self,
@@ -136,11 +176,17 @@ class RuntimeOrchestrator:
         healthy_baseline_designation: HealthyBaselineDesignation | None = None,
         previous_scenario_probability: ScenarioProbability | None = None,
         classification_timestamp: datetime | None = None,
+        runtime_event_id: str | None = None,
     ) -> RuntimeEvent:
         """Return the one canonical Runtime aggregate for every cycle outcome."""
 
+        # A previous direct caller had no external completion boundary; its
+        # successfully returned event therefore becomes committed before the
+        # next cycle. Observation Lifecycle commits or rolls back explicitly.
+        self._pending_continuity.clear()
+        continuity_before = self._snapshot_continuity()
         try:
-            return self._process_market_update(
+            event = self._process_market_update(
                 snapshot,
                 previous_state=previous_state,
                 previous_hypothesis=previous_hypothesis,
@@ -151,11 +197,19 @@ class RuntimeOrchestrator:
                 healthy_baseline_designation=healthy_baseline_designation,
                 previous_scenario_probability=previous_scenario_probability,
                 classification_timestamp=classification_timestamp,
+                runtime_event_id=runtime_event_id,
             )
+            if event.runtime_status is RuntimeStatus.COMPLETED:
+                self._pending_continuity[event.event_id] = continuity_before
+            else:
+                self._restore_continuity(continuity_before)
+            return event
         except Exception as exc:
+            self._restore_continuity(continuity_before)
             return _initial_runtime_event(
                 snapshot,
                 episode_id=episode_id,
+                runtime_event_id=runtime_event_id,
                 runtime_status=RuntimeStatus.FAILED,
                 errors_or_warnings=(f"{type(exc).__name__}: {exc}",),
             )
@@ -175,12 +229,14 @@ class RuntimeOrchestrator:
         healthy_baseline_designation: HealthyBaselineDesignation | None = None,
         previous_scenario_probability: ScenarioProbability | None = None,
         classification_timestamp: datetime | None = None,
+        runtime_event_id: str | None = None,
     ) -> RuntimeEvent:
         eligibility = self.market_eligibility_filter.evaluate(snapshot)
         if not eligibility.eligible:
             return _initial_runtime_event(
                 snapshot,
                 episode_id=episode_id,
+                runtime_event_id=runtime_event_id,
                 runtime_status=RuntimeStatus.REJECTED,
                 errors_or_warnings=(
                     f"market_eligibility:{eligibility.reason.value}",
@@ -206,10 +262,11 @@ class RuntimeOrchestrator:
                 "Healthy Baseline reference must match its canonical designation."
             )
 
-        event_id = _cycle_event_id(snapshot)
+        event_id = runtime_event_id or _cycle_event_id(snapshot)
         event = _initial_runtime_event(
             snapshot,
             episode_id=episode_id,
+            runtime_event_id=event_id,
             runtime_status=RuntimeStatus.IN_PROGRESS,
         )
         observations = build_observation_package(snapshot, runtime_event_id=event_id)
@@ -452,12 +509,13 @@ def _initial_runtime_event(
     snapshot: MarketSnapshot,
     *,
     episode_id: str | None,
+    runtime_event_id: str | None,
     runtime_status: RuntimeStatus,
     errors_or_warnings: tuple[str, ...] = (),
     compatibility_context: dict[str, Any] | None = None,
 ) -> RuntimeEvent:
     return RuntimeEvent(
-        event_id=_cycle_event_id(snapshot),
+        event_id=runtime_event_id or _cycle_event_id(snapshot),
         schema_version="runtime_event_v2",
         cycle_timestamp=snapshot.timestamp,
         symbol=snapshot.symbol,

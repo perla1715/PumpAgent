@@ -22,6 +22,7 @@ def serialize_runtime_event(event: RuntimeEvent) -> dict[str, Any]:
 
     if not isinstance(event, RuntimeEvent):
         raise TypeError("event must be a RuntimeEvent.")
+    event.validate()
     return {
         "persistence_schema_version": CANONICAL_RUNTIME_EVENT_SCHEMA_VERSION,
         "runtime_event": event.to_dict(),

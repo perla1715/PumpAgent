@@ -279,7 +279,7 @@ def make_runtime_event() -> RuntimeEvent:
         symbol="BTCUSDT",
         exchange="binance",
         timeframe="1m",
-        runtime_status=RuntimeStatus.FINALIZED,
+        runtime_status=RuntimeStatus.CREATED,
         market_snapshot=make_market_snapshot(),
         observation_package=make_observation_package(),
         structural_evidence=make_structural_evidence(),
@@ -480,7 +480,7 @@ class RuntimeDomainModelTests(unittest.TestCase):
         serialized = make_runtime_event().to_dict()
 
         self.assertEqual(serialized["cycle_timestamp"], "2026-07-01T12:00:00+00:00")
-        self.assertEqual(serialized["runtime_status"], "finalized")
+        self.assertEqual(serialized["runtime_status"], "created")
         self.assertEqual(serialized["market_snapshot"]["data_quality_status"], "valid")
         self.assertEqual(
             serialized["market_snapshot"]["timestamp"], "2026-07-01T12:00:00+00:00"

@@ -255,6 +255,7 @@ def process_observation_runtime_cycle(
 
     invalid_reason = _runtime_invalid_reason(runtime_result, value)
     if invalid_reason is not None:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
         return _result(value, ObservationRuntimeCycleStatus.RUNTIME_FAILED, invalid_reason,
                        admission=admission, entry=entry, runtime_invoked=True,
                        runtime_result=(runtime_result
@@ -266,40 +267,56 @@ def process_observation_runtime_cycle(
             runtime_result, entry.active_episode, value.closed_candle_timestamp,
             updated_at=value.runtime_completion_timestamp,
         )
-    except (TypeError, ValueError) as exc:
+    except Exception as exc:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
         return _result(value, ObservationRuntimeCycleStatus.RUNTIME_FAILED,
                        f"Runtime analytical context is invalid: {exc}", admission=admission,
                        entry=entry, runtime_invoked=True, runtime_result=runtime_result)
 
-    completion = prepare_completed_observation_cycle(
-        ObservationCycleCompletionInput(
-            admission_result=admission,
-            active_episode=entry.active_episode,
-            watchlist_entry=entry,
-            runtime_event_id=runtime_result.event_id,
-            runtime_completion_timestamp=value.runtime_completion_timestamp,
-            accepted_closed_candle_timestamp=value.closed_candle_timestamp,
-            runtime_diagnostics={
-                "diagnostic_report_present": runtime_result.compatibility_context.get(
-                    "diagnostic_report"
-                )
-                is not None
-            },
-            analytical_context=analytical_context,
+    try:
+        completion = prepare_completed_observation_cycle(
+            ObservationCycleCompletionInput(
+                admission_result=admission,
+                active_episode=entry.active_episode,
+                watchlist_entry=entry,
+                runtime_event_id=runtime_result.event_id,
+                runtime_completion_timestamp=value.runtime_completion_timestamp,
+                accepted_closed_candle_timestamp=value.closed_candle_timestamp,
+                runtime_diagnostics={
+                    "diagnostic_report_present": runtime_result.compatibility_context.get(
+                        "diagnostic_report"
+                    )
+                    is not None
+                },
+                analytical_context=analytical_context,
+            )
         )
-    )
+    except Exception as exc:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
+        return _result(
+            value,
+            ObservationRuntimeCycleStatus.COMPLETION_REJECTED,
+            str(exc),
+            admission=admission,
+            entry=entry,
+            runtime_invoked=True,
+            runtime_result=runtime_result,
+        )
     if completion.status is not CycleCompletionStatus.COMPLETED:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
         return _result(value, ObservationRuntimeCycleStatus.COMPLETION_REJECTED,
                        completion.completion_reason, admission=admission, entry=entry,
                        runtime_invoked=True, runtime_result=runtime_result,
                        completion=completion)
     try:
         resulting = watchlist.apply_completed_observation_cycle(completion)
-    except (TypeError, ValueError) as exc:
+    except Exception as exc:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
         return _result(value, ObservationRuntimeCycleStatus.COMPLETION_REJECTED,
                        str(exc), admission=admission, entry=entry,
                        runtime_invoked=True, runtime_result=runtime_result,
                        completion=completion)
+    runtime.commit_runtime_continuity(runtime_result.event_id)
     return _result(value, ObservationRuntimeCycleStatus.COMPLETED,
                    "The admitted Runtime cycle completed and was applied atomically.",
                    admission=admission, entry=resulting, runtime_invoked=True,

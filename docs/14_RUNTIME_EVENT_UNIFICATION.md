@@ -21,6 +21,9 @@ Terminal lifecycle states are explicit:
 - `FAILED` records a technical or contract failure and contains no downstream
   decision.
 
+`COMPLETED` is the only terminal-success status. The legacy `FINALIZED` value
+is retired rather than retained as a second success meaning.
+
 Only a completed event may advance Episode analytical continuity.
 
 ## Compatibility projection
@@ -40,7 +43,15 @@ compatibility schema only.
 The fixture entry point owns fixture loading, not analytical orchestration.
 Market-data-only use returns the created input RuntimeEvent. Any deprecated
 analytical stage request delegates the complete cycle to
-`RuntimeOrchestrator`; partial parallel analytical execution is not supported.
+`RuntimeOrchestrator`. Legacy partial fixture results are compatibility
+projections of that one delegated execution; partial parallel analytical
+execution is not supported.
+
+Compatibility projections preserve fixture Runtime identity, schema version,
+cycle timestamp, and partial section shape. Their analytical section values
+come from the production engines. The retired fixture-only synthetic
+Hypothesis label is not reproduced because doing so would fabricate or
+reinterpret a canonical analytical output.
 
 ## Downstream ownership
 
