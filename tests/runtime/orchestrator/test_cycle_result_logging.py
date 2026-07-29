@@ -12,10 +12,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pumpagent.runtime.orchestrator import (
-    run_agent_cycle,
     serialize_agent_cycle_result,
 )
-from tests.runtime.orchestrator.test_runtime_loop import make_snapshot
+from tests.runtime.orchestrator.test_runtime_loop import make_snapshot, run_agent_cycle
 
 
 class RuntimeCycleResultLoggingTests(unittest.TestCase):
@@ -24,25 +23,75 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
 
         serialized = serialize_agent_cycle_result(result)
 
-        self.assertEqual(serialized["schema_version"], "runtime_cycle_v1")
+        self.assertEqual(serialized["schema_version"], "runtime_cycle_v4")
         self.assertEqual(serialized["event_id"], result.event_id)
         self.assertEqual(serialized["timestamp"], result.timestamp.isoformat())
         self.assertEqual(serialized["symbol"], "BTCUSDT")
         self.assertEqual(serialized["exchange"], "binance")
         self.assertEqual(serialized["timeframe"], "1m")
         self.assertEqual(serialized["previous_state"], "UNKNOWN")
-        self.assertEqual(serialized["new_state"], "IGNITION")
-        self.assertEqual(serialized["hypothesis_id"], result.hypothesis.id)
-        self.assertEqual(serialized["hypothesis_status"], result.hypothesis.status)
+        self.assertEqual(serialized["new_state"], "UNKNOWN")
+        self.assertEqual(
+            serialized["process_direction"],
+            result.agent_state.process_direction.value,
+        )
+        self.assertEqual(
+            serialized["hypothesis_id"], result.hypothesis.hypothesis_id
+        )
+        self.assertEqual(
+            serialized["hypothesis_status"], result.hypothesis.lifecycle_status.name
+        )
+        self.assertEqual(
+            serialized["hypothesis_label"], result.hypothesis.hypothesis_label
+        )
+        self.assertEqual(
+            serialized["hypothesis_episode_id"], result.hypothesis.episode_id
+        )
+        self.assertEqual(
+            serialized["hypothesis_event_id"], result.hypothesis.event_id
+        )
+        self.assertEqual(serialized["explanation_confidence_score"], 50)
         self.assertEqual(serialized["confidence"], 50)
+        self.assertEqual(
+            serialized["confidence_semantics"],
+            "explanation_confidence_compatibility_score",
+        )
         self.assertEqual(serialized["agent_state_event_id"], result.agent_state.event_id)
+        scenario = serialized["scenario_probability"]
+        self.assertEqual(scenario["event_id"], result.event_id)
+        self.assertEqual(scenario["episode_id"], result.hypothesis.episode_id)
+        self.assertEqual(
+            scenario["source_hypothesis_id"],
+            result.hypothesis.hypothesis_id,
+        )
+        self.assertEqual(
+            scenario["primary_scenario"],
+            result.scenario_probability.primary_scenario.value,
+        )
+        self.assertEqual(
+            scenario["probability_model"],
+            "deterministic_policy_weights_not_calibrated",
+        )
         self.assertEqual(len(serialized["evidence"]), 3)
+        confidence = serialized["confidence_assessment"]
+        self.assertEqual(confidence["event_id"], result.event_id)
+        self.assertEqual(confidence["episode_id"], result.hypothesis.episode_id)
+        self.assertEqual(
+            confidence["source_hypothesis_id"],
+            result.hypothesis.hypothesis_id,
+        )
+        self.assertEqual(confidence["final_confidence_level"], "low")
+        self.assertEqual(
+            confidence["data_quality_impact"],
+            "market_snapshot_data_quality:valid",
+        )
+        self.assertIsNone(confidence["numeric_confidence_score"])
 
     def test_schema_version_is_present(self) -> None:
         serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
 
         self.assertIn("schema_version", serialized)
-        self.assertEqual(serialized["schema_version"], "runtime_cycle_v1")
+        self.assertEqual(serialized["schema_version"], "runtime_cycle_v4")
 
     def test_existing_serialized_fields_remain_backward_compatible(self) -> None:
         serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
@@ -56,11 +105,19 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
             "timeframe",
             "previous_state",
             "new_state",
+            "process_direction",
             "hypothesis_id",
             "hypothesis_status",
+            "hypothesis_label",
+            "hypothesis_episode_id",
+            "hypothesis_event_id",
+            "explanation_confidence_score",
             "confidence",
+            "confidence_semantics",
             "evidence",
             "agent_state_event_id",
+            "scenario_probability",
+            "confidence_assessment",
         }
 
         self.assertEqual(set(serialized), expected_fields)

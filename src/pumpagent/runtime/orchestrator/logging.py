@@ -12,7 +12,7 @@ from typing import Any
 from pumpagent.runtime.orchestrator.runtime_loop import AgentCycleResult
 
 
-RUNTIME_CYCLE_SCHEMA_VERSION = "runtime_cycle_v1"
+RUNTIME_CYCLE_SCHEMA_VERSION = "runtime_cycle_v4"
 
 
 def serialize_agent_cycle_result(result: AgentCycleResult) -> dict[str, Any]:
@@ -27,11 +27,72 @@ def serialize_agent_cycle_result(result: AgentCycleResult) -> dict[str, Any]:
         "timeframe": result.snapshot.timeframe,
         "previous_state": result.agent_state.previous_state.name,
         "new_state": result.agent_state.current_state.name,
-        "hypothesis_id": result.hypothesis.id,
-        "hypothesis_status": result.hypothesis.status,
+        "process_direction": result.agent_state.process_direction.value,
+        "hypothesis_id": result.hypothesis.hypothesis_id,
+        "hypothesis_status": result.hypothesis.lifecycle_status.name,
+        "hypothesis_label": result.hypothesis.hypothesis_label,
+        "hypothesis_episode_id": result.hypothesis.episode_id,
+        "hypothesis_event_id": result.hypothesis.event_id,
+        "explanation_confidence_score": (
+            result.hypothesis.explanation_confidence_score
+        ),
         "confidence": result.confidence,
+        "confidence_semantics": "explanation_confidence_compatibility_score",
         "evidence": tuple(_serialize_evidence_item(item) for item in result.evidence),
         "agent_state_event_id": result.agent_state.event_id,
+        "scenario_probability": {
+            "event_id": result.scenario_probability.runtime_event_id,
+            "episode_id": result.scenario_probability.episode_id,
+            "source_hypothesis_id": (
+                result.scenario_probability.source_hypothesis_id
+            ),
+            "primary_scenario": result.scenario_probability.primary_scenario.value,
+            "alternative_scenarios": (
+                tuple(
+                    item.scenario.value
+                    for item in result.scenario_probability.distribution
+                    if item.scenario
+                    is not result.scenario_probability.primary_scenario
+                )
+            ),
+            "deterministic_policy_weights": dict(
+                (
+                    item.scenario.value,
+                    str(item.probability),
+                )
+                for item in result.scenario_probability.distribution
+            ),
+            "uncertainty": result.scenario_probability.uncertainty.value,
+            "reason_codes": tuple(
+                item.value for item in result.scenario_probability.reason_codes
+            ),
+            "probability_model": "deterministic_policy_weights_not_calibrated",
+        },
+        "confidence_assessment": {
+            "event_id": result.confidence_assessment.event_id,
+            "episode_id": result.confidence_assessment.episode_id,
+            "source_hypothesis_id": (
+                result.confidence_assessment.source_hypothesis_id
+            ),
+            "final_confidence_level": (
+                result.confidence_assessment.final_confidence_level.value
+            ),
+            "confidence_summary": result.confidence_assessment.confidence_summary,
+            "confidence_drivers": result.confidence_assessment.confidence_drivers,
+            "confidence_reducers": result.confidence_assessment.confidence_reducers,
+            "data_quality_impact": result.confidence_assessment.data_quality_impact,
+            "contradiction_impact": (
+                result.confidence_assessment.contradiction_impact
+            ),
+            "uncertainty_level": (
+                result.confidence_assessment.uncertainty_level.value
+            ),
+            "reliability_notes": result.confidence_assessment.reliability_notes,
+            "calibration_notes": result.confidence_assessment.calibration_notes,
+            "numeric_confidence_score": (
+                result.confidence_assessment.numeric_confidence_score
+            ),
+        },
     }
 
 

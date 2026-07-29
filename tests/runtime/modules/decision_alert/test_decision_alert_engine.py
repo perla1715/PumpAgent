@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import copy
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -20,7 +22,10 @@ from pumpagent.runtime.domain import (
     AgentState,
     ConfidenceAssessment,
     DecisionAlert,
+    HypothesisEvidenceReference,
+    HypothesisLifecycleStatus,
     HypothesisPackage,
+    HypothesisSemanticCode,
     RuntimeEvent,
     ScenarioProbability,
 )
@@ -29,6 +34,7 @@ from pumpagent.runtime.domain.enums import (
     AlertCategory,
     AlertLevel,
     ConfidenceLevel,
+    ProcessDirection,
     DecisionType,
     StateTransitionStatus,
     UncertaintyLevel,
@@ -45,7 +51,21 @@ from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixtu
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
+from pumpagent.runtime.modules.scenario_probability import build_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
+from tests.runtime.modules.scenario_probability.test_scenario_probability_engine import (
+    make_process_evidence,
+    make_process_quality,
+)
+
+
+CANONICAL_HYPOTHESIS_INPUT = {
+    "episode_id": "episode-1",
+    "hypothesis_id": "hypothesis-runtime-evt-1",
+    "explanation_confidence_score": 50,
+    "lifecycle_status": HypothesisLifecycleStatus.CREATED,
+    "hypothesis_change_reason": "Initial hypothesis for the test episode.",
+}
 
 
 def make_event_with_confidence() -> RuntimeEvent:
@@ -54,9 +74,9 @@ def make_event_with_confidence() -> RuntimeEvent:
     event = add_observation_package(event)
     event = add_structural_evidence(event)
     event = add_market_efficiency_evidence(event)
-    event = add_hypothesis_package(event)
-    event = add_agent_state(event)
-    event = add_scenario_probability(event)
+    event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
+    event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
+    event = add_canonical_scenario_probability(event)
     return add_confidence_assessment(event)
 
 
@@ -81,33 +101,55 @@ def make_event_through_market_efficiency() -> RuntimeEvent:
 
 def make_event_through_hypothesis() -> RuntimeEvent:
     event = make_event_through_market_efficiency()
-    event = add_hypothesis_package(event)
+    event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
     return event
 
 
 def make_event_through_agent_state() -> RuntimeEvent:
     event = make_event_through_hypothesis()
-    event = add_agent_state(event)
+    event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
     return event
 
 
 def make_event_through_scenario_probability() -> RuntimeEvent:
     event = make_event_through_agent_state()
-    event = add_scenario_probability(event)
+    event = add_canonical_scenario_probability(event)
     return event
+
+
+def add_canonical_scenario_probability(event: RuntimeEvent) -> RuntimeEvent:
+    return add_scenario_probability(
+        event,
+        process_evidence=make_process_evidence(event_id=event.event_id),
+        process_quality_assessment=make_process_quality(event_id=event.event_id),
+    )
 
 
 def make_hypothesis_package(*, event_id: str = "runtime-evt-1") -> HypothesisPackage:
     return HypothesisPackage(
         event_id=event_id,
+        episode_id="episode-1",
+        hypothesis_id=f"hypothesis-{event_id}",
         hypothesis_label="current_condition_explanation",
         hypothesis_summary="Mock current-condition explanation.",
-        supporting_evidence=("structure:mock",),
+        supporting_evidence=(
+            HypothesisEvidenceReference(
+                event_id,
+                "structural_evidence",
+                "mock",
+                "Mock structural evidence.",
+            ),
+        ),
         contradicting_evidence=(),
-        competing_hypotheses=(),
+        explanation_confidence_score=50,
         current_hypothesis_confidence_context=ConfidenceLevel.MEDIUM,
         reasoning_notes="Mock hypothesis for Decision / Alert tests.",
         uncertainty=UncertaintyLevel.MEDIUM,
+        semantic_code=HypothesisSemanticCode.UNRESOLVED,
+        lifecycle_status=HypothesisLifecycleStatus.CREATED,
+        previous_hypothesis_id=None,
+        previous_runtime_event_id=None,
+        hypothesis_change_reason="Initial hypothesis for the test episode.",
     )
 
 
@@ -119,6 +161,7 @@ def make_agent_state(
     return AgentState(
         event_id=event_id,
         current_state=current_state,
+        process_direction=ProcessDirection.UNKNOWN,
         previous_state=AgentStateType.UNKNOWN,
         state_transition_status=StateTransitionStatus.CHANGED
         if current_state != AgentStateType.UNKNOWN
@@ -133,18 +176,20 @@ def make_agent_state(
 def make_scenario_probability(
     *,
     event_id: str = "runtime-evt-1",
-    primary_scenario: str = "continuation_persists",
 ) -> ScenarioProbability:
-    return ScenarioProbability(
+    hypothesis = make_hypothesis_package(event_id=event_id)
+    agent_state = make_agent_state(
+        AgentStateType.UNKNOWN,
         event_id=event_id,
-        scenario_set=(primary_scenario, "alternative_path"),
-        scenario_probabilities={primary_scenario: 0.55, "alternative_path": 0.45},
-        primary_scenario=primary_scenario,
-        alternative_scenarios=("alternative_path",),
-        supporting_evidence=("scenario:mock",),
-        contradicting_evidence=(),
-        uncertainty=UncertaintyLevel.MEDIUM,
-        monitoring_focus=("runtime_attention",),
+    )
+    process = make_process_evidence(event_id=event_id)
+    quality = make_process_quality(event_id=event_id)
+    return build_scenario_probability(
+        hypothesis,
+        agent_state,
+        process,
+        quality,
+        active_episode_id=process.episode_id,
     )
 
 
@@ -155,6 +200,8 @@ def make_confidence_assessment(
 ) -> ConfidenceAssessment:
     return ConfidenceAssessment(
         event_id=event_id,
+        episode_id="episode-1",
+        source_hypothesis_id=f"hypothesis-{event_id}",
         final_confidence_level=level,
         confidence_summary="Mock confidence assessment.",
         confidence_drivers=("mock_driver",),
@@ -198,9 +245,49 @@ class DecisionAlertEngineTests(unittest.TestCase):
         self.assertEqual(decision_alert.event_id, event.hypothesis_package.event_id)
         self.assertEqual(decision_alert.event_id, event.confidence_assessment.event_id)
         self.assertIn(
-            event.scenario_probability.primary_scenario,
+            event.scenario_probability.primary_scenario.value,
             decision_alert.monitoring_instructions[-1],
         )
+
+    def test_decision_alert_rejects_scenario_source_identity_mismatch(self) -> None:
+        event = make_event_with_confidence()
+        cases = (
+            ("episode_id", "other-episode"),
+            ("source_hypothesis_id", "other-hypothesis"),
+        )
+
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name):
+                scenario = copy.copy(event.scenario_probability)
+                object.__setattr__(scenario, field_name, value)
+                with self.assertRaisesRegex(DecisionAlertError, field_name):
+                    build_decision_alert(
+                        event.hypothesis_package,
+                        event.agent_state,
+                        scenario,
+                        event.confidence_assessment,
+                    )
+
+    def test_decision_alert_rejects_confidence_source_identity_mismatch(self) -> None:
+        event = make_event_with_confidence()
+        cases = (
+            ("episode_id", "other-episode"),
+            ("source_hypothesis_id", "other-hypothesis"),
+        )
+
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name):
+                confidence = replace(
+                    event.confidence_assessment,
+                    **{field_name: value},
+                )
+                with self.assertRaisesRegex(DecisionAlertError, field_name):
+                    build_decision_alert(
+                        event.hypothesis_package,
+                        event.agent_state,
+                        event.scenario_probability,
+                        confidence,
+                    )
 
     def test_decision_alert_produces_valid_decision_alert(self) -> None:
         event = make_event_with_confidence()

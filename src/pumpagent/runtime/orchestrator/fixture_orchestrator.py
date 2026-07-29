@@ -10,15 +10,13 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-from pumpagent.runtime.domain import RuntimeEvent
+from pumpagent.runtime.domain import HypothesisLifecycleStatus, RuntimeEvent
+from pumpagent.runtime.domain.enums import ProcessDirection
 from pumpagent.runtime.modules.agent_state import add_agent_state
-from pumpagent.runtime.modules.confidence import add_confidence_assessment
-from pumpagent.runtime.modules.decision_alert import add_decision_alert
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
-from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
 
 
@@ -44,6 +42,8 @@ def run_fixture_runtime_cycle(
     timeframe: str,
     fixture_path: str | Path,
     schema_version: str = "1.0",
+    episode_id: str | None = None,
+    hypothesis_id: str | None = None,
     run_perception: bool = False,
     run_structure: bool = False,
     run_market_efficiency: bool = False,
@@ -91,19 +91,21 @@ def run_fixture_runtime_cycle(
         event = add_market_efficiency_evidence(event)
 
     if _stage_reaches(stage, FixtureRuntimeStage.HYPOTHESIS):
-        event = add_hypothesis_package(event)
+        if not isinstance(episode_id, str) or not episode_id.strip():
+            raise ValueError("episode_id is required for the Hypothesis stage.")
+        if not isinstance(hypothesis_id, str) or not hypothesis_id.strip():
+            raise ValueError("hypothesis_id is required for the Hypothesis stage.")
+        event = add_hypothesis_package(
+            event,
+            episode_id=episode_id,
+            hypothesis_id=hypothesis_id,
+            explanation_confidence_score=0,
+            lifecycle_status=HypothesisLifecycleStatus.CREATED,
+            hypothesis_change_reason="Initial fixture hypothesis for the episode.",
+        )
 
     if _stage_reaches(stage, FixtureRuntimeStage.AGENT_STATE):
-        event = add_agent_state(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.SCENARIO_PROBABILITY):
-        event = add_scenario_probability(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.CONFIDENCE):
-        event = add_confidence_assessment(event)
-
-    if _stage_reaches(stage, FixtureRuntimeStage.DECISION_ALERT):
-        event = add_decision_alert(event)
+        event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
     return event
 
@@ -132,21 +134,35 @@ def _resolve_target_stage(
             "Learning Memory is outside the Runtime Orchestrator v0.1 boundary."
         )
 
-    if target_stage is not None:
-        if isinstance(target_stage, FixtureRuntimeStage):
-            requested_stage = target_stage
-        else:
-            requested_stage = FixtureRuntimeStage(str(target_stage))
+    requested_stage = (
+        target_stage
+        if isinstance(target_stage, FixtureRuntimeStage)
+        else FixtureRuntimeStage(str(target_stage))
+        if target_stage is not None
+        else None
+    )
+    retired_stages = frozenset(
+        (
+            FixtureRuntimeStage.SCENARIO_PROBABILITY,
+            FixtureRuntimeStage.CONFIDENCE,
+            FixtureRuntimeStage.DECISION_ALERT,
+        )
+    )
+    if (
+        requested_stage in retired_stages
+        or run_scenario_probability
+        or run_confidence
+        or run_decision_alert
+    ):
+        raise ValueError(
+            "Fixture Runtime stages after Agent State are retired because the "
+            "legacy RuntimeEvent path cannot supply canonical Process Evidence "
+            "and Process Quality."
+        )
+    if requested_stage is not None:
         if requested_stage is FixtureRuntimeStage.PERCEPTION:
             return FixtureRuntimeStage.OBSERVATION_PACKAGE
         return requested_stage
-
-    if run_decision_alert:
-        return FixtureRuntimeStage.DECISION_ALERT
-    if run_confidence:
-        return FixtureRuntimeStage.CONFIDENCE
-    if run_scenario_probability:
-        return FixtureRuntimeStage.SCENARIO_PROBABILITY
     if run_agent_state:
         return FixtureRuntimeStage.AGENT_STATE
     if run_hypothesis:

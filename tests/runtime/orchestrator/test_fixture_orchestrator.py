@@ -20,6 +20,11 @@ from pumpagent.runtime.orchestrator import (
     run_fixture_runtime_cycle,
 )
 
+FIXTURE_IDENTITY = {
+    "episode_id": "episode-fixture-1",
+    "hypothesis_id": "hypothesis-fixture-1",
+}
+
 
 class FixtureRuntimeOrchestratorTests(unittest.TestCase):
     def run_cycle(self) -> RuntimeEvent:
@@ -203,6 +208,18 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         self.assertEqual(event.market_snapshot.to_dict(), original_snapshot)
         self.assertEqual(event.structural_evidence.to_dict(), original_structure)
         self.assertEqual(
+            event.market_efficiency_evidence.to_dict(),
+            run_fixture_market_data_cycle(
+                event_id="runtime-evt-1",
+                cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                symbol="BTCUSDT",
+                exchange="binance",
+                timeframe="1m",
+                fixture_path=FIXTURE,
+                run_market_efficiency=True,
+            ).market_efficiency_evidence.to_dict(),
+        )
+        self.assertEqual(
             event.market_efficiency_evidence.participation_direction,
             "not_assessed",
         )
@@ -239,6 +256,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_hypothesis=True,
+            **FIXTURE_IDENTITY,
         )
 
         self.assertIsNotNone(event.market_snapshot)
@@ -272,6 +290,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_hypothesis=True,
+            **FIXTURE_IDENTITY,
         )
         original_snapshot = hypothesis_event.market_snapshot.to_dict()
         original_structure = hypothesis_event.structural_evidence.to_dict()
@@ -286,6 +305,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_agent_state=True,
+            **FIXTURE_IDENTITY,
         )
 
         self.assertIsNotNone(event.market_snapshot)
@@ -308,7 +328,19 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         self.assertIsNone(event.decision_alert)
         self.assertIsNone(event.learning_metadata)
 
-    def test_orchestrator_can_run_through_scenario_probability(self) -> None:
+    def test_orchestrator_rejects_retired_scenario_probability_stage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stages after Agent State are retired"):
+            run_fixture_market_data_cycle(
+                event_id="runtime-evt-1",
+                cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                symbol="BTCUSDT",
+                exchange="binance",
+                timeframe="1m",
+                fixture_path=FIXTURE,
+                run_scenario_probability=True,
+                **FIXTURE_IDENTITY,
+            )
+        return
         agent_state_event = run_fixture_market_data_cycle(
             event_id="runtime-evt-1",
             cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
@@ -317,6 +349,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_agent_state=True,
+            **FIXTURE_IDENTITY,
         )
         original_snapshot = agent_state_event.market_snapshot.to_dict()
         original_structure = agent_state_event.structural_evidence.to_dict()
@@ -332,10 +365,11 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_scenario_probability=True,
+            **FIXTURE_IDENTITY,
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNotNone(event.observation_package)
+        self.assertIsNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -349,7 +383,10 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(event.hypothesis_package.to_dict(), original_hypothesis)
         self.assertEqual(event.agent_state.to_dict(), original_agent_state)
-        self.assertEqual(event.scenario_probability.event_id, event.event_id)
+        self.assertEqual(
+            event.scenario_probability.runtime_event_id,
+            event.event_id,
+        )
         self.assertEqual(
             event.scenario_probability.primary_scenario,
             "continue_observation",
@@ -358,7 +395,19 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         self.assertIsNone(event.decision_alert)
         self.assertIsNone(event.learning_metadata)
 
-    def test_orchestrator_can_run_through_confidence(self) -> None:
+    def test_orchestrator_rejects_retired_confidence_stage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stages after Agent State are retired"):
+            run_fixture_runtime_cycle(
+                event_id="runtime-evt-1",
+                cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                symbol="BTCUSDT",
+                exchange="binance",
+                timeframe="1m",
+                fixture_path=FIXTURE,
+                target_stage=FixtureRuntimeStage.CONFIDENCE,
+                **FIXTURE_IDENTITY,
+            )
+        return
         scenario_event = run_fixture_market_data_cycle(
             event_id="runtime-evt-1",
             cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
@@ -367,6 +416,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             run_scenario_probability=True,
+            **FIXTURE_IDENTITY,
         )
         original_snapshot = scenario_event.market_snapshot.to_dict()
         original_structure = scenario_event.structural_evidence.to_dict()
@@ -383,10 +433,11 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             target_stage=FixtureRuntimeStage.CONFIDENCE,
+            **FIXTURE_IDENTITY,
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNotNone(event.observation_package)
+        self.assertIsNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -404,13 +455,33 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         self.assertEqual(event.scenario_probability.to_dict(), original_scenario)
         self.assertEqual(event.confidence_assessment.event_id, event.event_id)
         self.assertEqual(
+            event.confidence_assessment.episode_id,
+            event.hypothesis_package.episode_id,
+        )
+        self.assertEqual(
+            event.confidence_assessment.source_hypothesis_id,
+            event.hypothesis_package.hypothesis_id,
+        )
+        self.assertEqual(
             event.confidence_assessment.final_confidence_level.value,
             "low",
         )
         self.assertIsNone(event.decision_alert)
         self.assertIsNone(event.learning_metadata)
 
-    def test_orchestrator_can_run_through_decision_alert(self) -> None:
+    def test_orchestrator_rejects_retired_decision_alert_stage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stages after Agent State are retired"):
+            run_fixture_runtime_cycle(
+                event_id="runtime-evt-1",
+                cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                symbol="BTCUSDT",
+                exchange="binance",
+                timeframe="1m",
+                fixture_path=FIXTURE,
+                target_stage=FixtureRuntimeStage.DECISION_ALERT,
+                **FIXTURE_IDENTITY,
+            )
+        return
         confidence_event = run_fixture_runtime_cycle(
             event_id="runtime-evt-1",
             cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
@@ -419,6 +490,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             target_stage=FixtureRuntimeStage.CONFIDENCE,
+            **FIXTURE_IDENTITY,
         )
         original_snapshot = confidence_event.market_snapshot.to_dict()
         original_structure = confidence_event.structural_evidence.to_dict()
@@ -436,10 +508,11 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             timeframe="1m",
             fixture_path=FIXTURE,
             target_stage=FixtureRuntimeStage.DECISION_ALERT,
+            **FIXTURE_IDENTITY,
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNotNone(event.observation_package)
+        self.assertIsNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)

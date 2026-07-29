@@ -120,15 +120,43 @@ def _validate_inputs(
 
     if (
         scenario_probability is not None
-        and scenario_probability.event_id != runtime_event_id
+        and scenario_probability.runtime_event_id != runtime_event_id
     ):
         raise DecisionAlertError(
-            "ScenarioProbability.event_id must match the RuntimeEvent.event_id."
+            "ScenarioProbability.runtime_event_id must match the RuntimeEvent.event_id."
+        )
+
+    if (
+        scenario_probability is not None
+        and scenario_probability.episode_id != hypothesis.episode_id
+    ):
+        raise DecisionAlertError(
+            "ScenarioProbability.episode_id must match HypothesisPackage.episode_id."
+        )
+
+    if (
+        scenario_probability is not None
+        and scenario_probability.source_hypothesis_id != hypothesis.hypothesis_id
+    ):
+        raise DecisionAlertError(
+            "ScenarioProbability.source_hypothesis_id must match "
+            "HypothesisPackage.hypothesis_id."
         )
 
     if confidence_assessment.event_id != runtime_event_id:
         raise DecisionAlertError(
             "ConfidenceAssessment.event_id must match the RuntimeEvent.event_id."
+        )
+
+    if confidence_assessment.episode_id != hypothesis.episode_id:
+        raise DecisionAlertError(
+            "ConfidenceAssessment.episode_id must match HypothesisPackage.episode_id."
+        )
+
+    if confidence_assessment.source_hypothesis_id != hypothesis.hypothesis_id:
+        raise DecisionAlertError(
+            "ConfidenceAssessment.source_hypothesis_id must match "
+            "HypothesisPackage.hypothesis_id."
         )
 
 
@@ -232,6 +260,9 @@ def _monitoring_instructions(
     if scenario_probability is None:
         instructions.append("Review reasoning chain before relying on this output.")
     else:
-        instructions.append(f"Monitor primary scenario: {scenario_probability.primary_scenario}.")
+        instructions.append(
+            "Monitor primary scenario: "
+            f"{scenario_probability.primary_scenario.value}."
+        )
 
     return tuple(instructions)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,8 @@ FIXTURE = ROOT / "tests" / "fixtures" / "market_data" / "btcusdt_1m_snapshot.jso
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import LearningMetadata, RuntimeEvent
-from pumpagent.runtime.domain.enums import ReviewStatus
+from pumpagent.runtime.domain import HypothesisLifecycleStatus, LearningMetadata, RuntimeEvent
+from pumpagent.runtime.domain.enums import ProcessDirection, ReviewStatus
 from pumpagent.runtime.modules.agent_state import add_agent_state
 from pumpagent.runtime.modules.confidence import add_confidence_assessment
 from pumpagent.runtime.modules.decision_alert import add_decision_alert
@@ -35,9 +36,20 @@ from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_ev
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
+from tests.runtime.modules.scenario_probability.test_scenario_probability_engine import (
+    make_process_evidence,
+    make_process_quality,
+)
 
 
 NOW = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+CANONICAL_HYPOTHESIS_INPUT = {
+    "episode_id": "episode-1",
+    "hypothesis_id": "hypothesis-runtime-evt-1",
+    "explanation_confidence_score": 50,
+    "lifecycle_status": HypothesisLifecycleStatus.CREATED,
+    "hypothesis_change_reason": "Initial hypothesis for the test episode.",
+}
 
 
 def make_base_event() -> RuntimeEvent:
@@ -57,11 +69,25 @@ def make_event_with_decision_alert() -> RuntimeEvent:
     event = add_observation_package(event)
     event = add_structural_evidence(event)
     event = add_market_efficiency_evidence(event)
-    event = add_hypothesis_package(event)
-    event = add_agent_state(event)
-    event = add_scenario_probability(event)
+    event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
+    event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
+    event = add_canonical_scenario_probability(event)
     event = add_confidence_assessment(event)
     return add_decision_alert(event)
+
+
+def _replace_scenario_event_id(scenario, event_id: str):
+    forged = copy.copy(scenario)
+    object.__setattr__(forged, "runtime_event_id", event_id)
+    return forged
+
+
+def add_canonical_scenario_probability(event: RuntimeEvent) -> RuntimeEvent:
+    return add_scenario_probability(
+        event,
+        process_evidence=make_process_evidence(event_id=event.event_id),
+        process_quality_assessment=make_process_quality(event_id=event.event_id),
+    )
 
 
 class LearningMemoryEngineTests(unittest.TestCase):
@@ -104,7 +130,26 @@ class LearningMemoryEngineTests(unittest.TestCase):
         for section in RUNTIME_OWNED_EVENT_ID_SECTIONS:
             with self.subTest(section=section):
                 section_value = getattr(event, section)
-                mismatched_section = replace(section_value, event_id="other-event")
+                if section == "hypothesis_package":
+                    mismatched_section = replace(
+                        section_value,
+                        event_id="other-event",
+                        supporting_evidence=tuple(
+                            replace(reference, source_event_id="other-event")
+                            for reference in section_value.supporting_evidence
+                        ),
+                        contradicting_evidence=tuple(
+                            replace(reference, source_event_id="other-event")
+                            for reference in section_value.contradicting_evidence
+                        ),
+                    )
+                elif section == "scenario_probability":
+                    mismatched_section = _replace_scenario_event_id(
+                        section_value,
+                        "other-event",
+                    )
+                else:
+                    mismatched_section = replace(section_value, event_id="other-event")
                 mismatched_event = event.with_sections(**{section: mismatched_section})
 
                 with self.assertRaisesRegex(LearningMemoryError, section):
@@ -167,13 +212,52 @@ class LearningMemoryEngineTests(unittest.TestCase):
 
     def test_present_scenario_probability_event_id_is_validated(self) -> None:
         event = make_event_with_decision_alert()
-        scenario = replace(event.scenario_probability, event_id="other-event")
+        scenario = _replace_scenario_event_id(
+            event.scenario_probability,
+            "other-event",
+        )
 
         with self.assertRaisesRegex(LearningMemoryError, "scenario_probability"):
             build_learning_metadata(
                 event.with_sections(scenario_probability=scenario),
                 created_at=NOW,
             )
+
+    def test_scenario_probability_source_identities_are_validated(self) -> None:
+        event = make_event_with_decision_alert()
+        cases = (
+            ("episode_id", "other-episode"),
+            ("source_hypothesis_id", "other-hypothesis"),
+        )
+
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name):
+                scenario = copy.copy(event.scenario_probability)
+                object.__setattr__(scenario, field_name, value)
+                with self.assertRaisesRegex(LearningMemoryError, field_name):
+                    build_learning_metadata(
+                        event.with_sections(scenario_probability=scenario),
+                        created_at=NOW,
+                    )
+
+    def test_confidence_assessment_source_identities_are_validated(self) -> None:
+        event = make_event_with_decision_alert()
+        cases = (
+            ("episode_id", "other-episode"),
+            ("source_hypothesis_id", "other-hypothesis"),
+        )
+
+        for field_name, value in cases:
+            with self.subTest(field_name=field_name):
+                confidence = replace(
+                    event.confidence_assessment,
+                    **{field_name: value},
+                )
+                with self.assertRaisesRegex(LearningMemoryError, field_name):
+                    build_learning_metadata(
+                        event.with_sections(confidence_assessment=confidence),
+                        created_at=NOW,
+                    )
 
     def test_missing_scenario_probability_is_review_only(self) -> None:
         event = make_event_with_decision_alert().with_sections(
@@ -280,9 +364,9 @@ class LearningMemoryEngineTests(unittest.TestCase):
         event = add_observation_package(event)
         event = add_structural_evidence(event)
         event = add_market_efficiency_evidence(event)
-        event = add_hypothesis_package(event)
-        event = add_agent_state(event)
-        event = add_scenario_probability(event)
+        event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
+        event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
+        event = add_canonical_scenario_probability(event)
         event = add_confidence_assessment(event)
 
         with self.assertRaisesRegex(LearningMemoryError, "decision_alert"):

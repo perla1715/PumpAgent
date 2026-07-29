@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import fields, is_dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -46,6 +47,8 @@ def freeze_value(value: Any) -> Any:
         return tuple(freeze_value(item) for item in value)
     if isinstance(value, list):
         return tuple(freeze_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(freeze_value(item) for item in value)
     return value
 
 
@@ -67,10 +70,14 @@ def to_primitive(value: Any) -> Any:
         return value.value
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
     if isinstance(value, Mapping):
         return {str(key): to_primitive(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [to_primitive(item) for item in value]
     if isinstance(value, list):
         return [to_primitive(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [to_primitive(item) for item in sorted(value, key=lambda item: str(item))]
     return value

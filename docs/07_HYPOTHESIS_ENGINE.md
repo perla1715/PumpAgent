@@ -2,289 +2,112 @@
 
 ## Status
 
-Implemented MVP.
+Implemented MVP. `HypothesisPackage` is the single canonical hypothesis domain
+contract and the sole hypothesis object produced by the controlled Runtime.
 
-This document is the canonical Hypothesis Engine documentation for the current
-MVP.
+The engine explains the current market condition from prepared evidence. It
+does not fetch market data, mutate upstream evidence, assign final Runtime
+confidence, calculate Scenario Probability, produce alerts, or execute trades.
 
-The Hypothesis Engine consumes upstream evidence and produces current-market
-explanations. It may create, update, weaken, or replace hypotheses.
+## Inputs And Output
 
-It does not fetch market data directly, mutate upstream evidence, produce final
-trading execution commands, own Telegram alerts, or orchestrate Runtime behavior.
+The canonical producer consumes:
 
----
+- the Observation Lifecycle-owned `episode_id`;
+- the current Runtime event identity;
+- `StructuralEvidence`;
+- `MarketEfficiencyEvidence`;
+- current `ProcessEvidence` for the operational interpretation;
+- the previous committed `HypothesisPackage`, when one exists in the same
+  Observation Episode;
+- an injected zero-argument hypothesis ID generator.
 
-## Current Paths
-
-The current implementation has two paths.
-
-### Clean HypothesisPackage Path
-
-The clean package path consumes:
-
-- `StructuralEvidence`
-- `MarketEfficiencyEvidence`
-
-It produces:
-
-- `HypothesisPackage`
+It produces exactly one immutable `HypothesisPackage`.
 
 Primary APIs:
 
-- `build_hypothesis_package()`
-- `add_hypothesis_package()`
+- `build_hypothesis_package()`;
+- `add_hypothesis_package()`;
+- `build_operational_hypothesis_package()`;
+- `generate_hypothesis_id()`.
 
-This path combines prepared objective evidence into a current-condition
-explanation.
+## Canonical Contract
 
-It preserves upstream evidence and writes only `hypothesis_package` when used
-through `add_hypothesis_package()`.
+The package owns:
 
-### Legacy / Runtime Scanner MarketHypothesis Path
+- Runtime and Observation Episode identity;
+- opaque hypothesis identity;
+- label and summary;
+- typed supporting and contradicting evidence references;
+- exact `explanation_confidence_score` and its categorical context;
+- uncertainty and reasoning notes;
+- lifecycle status, predecessor references, and change reason;
+- schema version.
 
-The legacy runtime scanner path is still present for compatibility.
+`explanation_confidence_score` is the numeric strength of the explanation. It
+uses the existing integer range from 0 through 100 and is distinct from final
+Runtime `ConfidenceAssessment`.
 
-Primary API:
+## Identity Ownership
 
-- `build_hypothesis()`
+Observation Lifecycle exclusively creates and owns `episode_id`. Runtime passes
+that value unchanged to the Hypothesis Engine.
 
-This path consumes arbitrary runtime scanner data and may call:
+The Hypothesis Engine decides whether identity is retained or replaced. A
+minimal injected generator performs only mechanical creation of a new opaque
+ID. The production generator returns a UUIDv4 string and receives no semantic
+inputs.
 
-- `detect_market_state()`
-- `calculate_confidence()`
-- `collect_evidence()`
+Identity behavior:
 
-It produces:
+- `CREATED` requests a new ID;
+- `REPLACED` requests a new ID;
+- `UPDATED` keeps the existing ID;
+- `WEAKENED` keeps the existing ID.
 
-- `MarketHypothesis`
-
-This path supports the current Runtime loop scanner-style flow. It is not the
-clean `HypothesisPackage` evidence contract path.
-
----
-
-## Public API And Exports
-
-Core exports:
-
-- `HypothesisError`
-- `MarketHypothesis`
-- `build_hypothesis()`
-- `build_hypothesis_package()`
-- `add_hypothesis_package()`
-
-Snapshot and history exports:
-
-- `HypothesisSnapshot`
-- `HypothesisSnapshotBuilder`
-- `HypothesisHistory`
-- `HistoryTrendAnalyzer`
-- `HistoryTrendSummary`
-- `build_hypothesis_snapshot()`
-
-Evaluator exports:
-
-- `HypothesisEvaluator`
-- `HypothesisEvaluation`
-
-Trend constants:
-
-- `TREND_IMPROVING`
-- `TREND_STABLE`
-- `TREND_WEAKENING`
-- `TREND_UNKNOWN`
-
-Evaluation constants:
-
-- `EVALUATION_REINFORCED`
-- `EVALUATION_NEUTRAL`
-- `EVALUATION_WEAKENING`
-- `EVALUATION_UNKNOWN`
-
----
-
-## Clean Package Model
-
-`HypothesisPackage` contains:
-
-- `event_id`
-- `hypothesis_label`
-- `hypothesis_summary`
-- `supporting_evidence`
-- `contradicting_evidence`
-- `competing_hypotheses`
-- `current_hypothesis_confidence_context`
-- `reasoning_notes`
-- `schema_version`
-- `previous_hypothesis`
-- `hypothesis_change_reason`
-- `invalidated_hypotheses`
-- `historical_similarity_notes`
-- `uncertainty`
-- `assumptions`
-
-The current MVP uses the label:
-
-- `current_condition_explanation`
-
-The package path does not decide official state, final confidence, alerts,
-trades, or future scenario probabilities.
-
----
-
-## Legacy MarketHypothesis Model
-
-`MarketHypothesis` contains:
-
-- `id`
-- `label`
-- `summary`
-- `market_state`
-- `confidence_score`
-- `evidence`
-- `supporting_evidence`
-- `contradicting_evidence`
-- `status`
-- `lifecycle_reason`
-- `previous_hypothesis_id`
-
-MVP market-state labels are:
-
-- `IGNITION` -> `Ignition attempt`
-- `CONTINUATION_ALIVE` -> `Continuation remains active`
-- `WEAKENING` -> `Move is weakening`
-- `UNKNOWN` -> `No clear hypothesis`
-
----
+Hypothesis identity never derives from event ID, episode ID, market identity,
+label, confidence, or timestamp. Continuity cannot cross Observation Episode
+boundaries.
 
 ## Lifecycle
 
-Hypothesis lifecycle statuses are deterministic:
+Lifecycle comparison is deterministic:
 
-- `CREATED`: no previous hypothesis exists.
-- `UPDATED`: the label is unchanged and confidence is stable or higher.
-- `WEAKENED`: the label is unchanged and confidence is lower.
-- `REPLACED`: the label changed, and the previous hypothesis id is preserved.
+- no previous package in the active episode: `CREATED`;
+- changed hypothesis label: `REPLACED`;
+- unchanged label with a lower exact explanation score: `WEAKENED`;
+- unchanged label with an equal or higher exact explanation score: `UPDATED`.
 
----
+Every non-created package records `previous_hypothesis_id` and
+`previous_runtime_event_id`. The previous Runtime event must differ from the
+current event.
 
-## Confidence Behavior
+Only successful Observation Cycle completion commits the package as
+`EpisodeAnalyticalContext.latest_hypothesis` and projects its ID into the
+Watchlist. Ineligible or failed cycles do not advance hypothesis continuity.
 
-The legacy `MarketHypothesis` path may contain a numeric `confidence_score`.
+## Agent State Boundary
 
-`HypothesisPackage` emits `current_hypothesis_confidence_context`.
+The controlled Agent State bridge consumes the canonical package together with
+the already-produced Process State and operational evidence values. It preserves
+the existing conservative state mapping and does not add hypothesis, state, or
+trading rules.
 
-`current_hypothesis_confidence_context` is not final market confidence and not
-trade confidence.
+## Diagnostics
 
-Final confidence remains the responsibility of the Confidence Engine if or when
-that layer is used.
-
----
-
-## Hypothesis Snapshot MVP
-
-`HypothesisSnapshot` records current interpretation context without changing
-Runtime behavior.
-
-It contains:
-
-- `state`
-- `confidence`
-- `confidence_trend`
-- `evidence_summary`
-- `created_at`
-- `label`
-
-Snapshot labels are deterministic and descriptive:
-
-- `unknown`
-- `low_evidence`
-- `structural_only`
-- `market_only`
-- `temporal_only`
-- `mixed_evidence`
-
-Snapshots do not modify `AgentState`, confidence, hypotheses, alerts,
-probabilities, or trading decisions.
-
----
-
-## Hypothesis History MVP
-
-`HypothesisHistory` is a bounded in-memory container for recent
-`HypothesisSnapshot` objects.
-
-It supports:
-
-- `append(snapshot)`
-- `latest()`
-- `previous()`
-- `size()`
-- `clear()`
-
-Older snapshots are discarded when the configured maximum history length is
-exceeded.
-
-`HistoryTrendAnalyzer` reads `HypothesisHistory` and returns a
-`HistoryTrendSummary` with:
-
-- `confidence_trend`
-- `evidence_score_trend`
-- `label_stability`
-- `sample_size`
-
-Supported trend values are:
-
-- `IMPROVING`
-- `STABLE`
-- `WEAKENING`
-- `UNKNOWN`
-
-Empty or single-snapshot history returns `UNKNOWN`.
-
-History and trend analysis are diagnostic only. They do not modify runtime
-behavior, hypotheses, confidence, alerts, probabilities, or trading decisions.
-
----
-
-## Hypothesis Evaluator MVP
-
-`HypothesisEvaluator` reads the current `HypothesisSnapshot` and
-`HistoryTrendSummary`, then returns a diagnostic `HypothesisEvaluation`.
-
-Evaluation statuses are:
-
-- `REINFORCED`
-- `NEUTRAL`
-- `WEAKENING`
-- `UNKNOWN`
-
-The evaluator uses deterministic trend rules:
-
-- improving confidence and improving evidence score -> `REINFORCED`
-- stable confidence and stable evidence score -> `NEUTRAL`
-- weakening confidence or weakening evidence score -> `WEAKENING`
-- missing, unknown, or mixed trend context -> `UNKNOWN`
-
-Evaluation is diagnostic only. It does not modify confidence, hypotheses, state
-transitions, runtime decisions, alerts, probabilities, or trading behavior.
-
----
+`HypothesisSnapshot`, `HypothesisHistory`, `HistoryTrendAnalyzer`, and
+`HypothesisEvaluator` remain deterministic diagnostic helpers. They do not
+modify the canonical package, Runtime state, confidence, probabilities, alerts,
+or trading decisions.
 
 ## Boundaries
 
-The Hypothesis Engine:
+The Hypothesis Engine must not:
 
-- consumes upstream evidence;
-- may form, update, weaken, or replace hypotheses;
-- may reason about current state context;
-- may emit hypothesis confidence context;
-- does not fetch market data directly;
-- does not mutate upstream evidence;
-- does not produce final trading execution commands;
-- does not own Telegram alerts;
-- does not own Runtime orchestration;
-- does not own future scenario probabilities;
-- does not own final trade confidence.
+- own Observation Episode identity;
+- infer continuity across episodes;
+- create IDs from semantic inputs;
+- calculate final confidence;
+- calculate Scenario Probability;
+- decide alerts or execution;
+- persist or export completed events.

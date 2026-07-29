@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -14,10 +15,18 @@ AGENT_STATE_MANAGER = SRC / "pumpagent" / "runtime" / "modules" / "agent_state" 
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import AgentState, HypothesisPackage, RuntimeEvent
+from pumpagent.runtime.domain import (
+    AgentState,
+    HypothesisEvidenceReference,
+    HypothesisLifecycleStatus,
+    HypothesisPackage,
+    HypothesisSemanticCode,
+    RuntimeEvent,
+)
 from pumpagent.runtime.domain.enums import (
     AgentStateType,
     ConfidenceLevel,
+    ProcessDirection,
     StateTransitionStatus,
     UncertaintyLevel,
 )
@@ -25,14 +34,21 @@ from pumpagent.runtime.modules.agent_state import (
     AgentStateError,
     add_agent_state,
     build_agent_state,
-    build_agent_state_from_market_hypothesis,
 )
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
-from pumpagent.runtime.modules.hypothesis import build_hypothesis
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.structure import add_structural_evidence
+
+
+CANONICAL_HYPOTHESIS_INPUT = {
+    "episode_id": "episode-test-1",
+    "hypothesis_id": "hypothesis-test-1",
+    "explanation_confidence_score": 50,
+    "lifecycle_status": HypothesisLifecycleStatus.CREATED,
+    "hypothesis_change_reason": "Initial hypothesis for the test episode.",
+}
 
 
 def make_event_with_hypothesis() -> RuntimeEvent:
@@ -48,14 +64,17 @@ def make_event_with_hypothesis() -> RuntimeEvent:
     event = add_observation_package(event)
     event = add_structural_evidence(event)
     event = add_market_efficiency_evidence(event)
-    return add_hypothesis_package(event)
+    return add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
 
 
 class AgentStateManagerTests(unittest.TestCase):
     def test_agent_state_reads_hypothesis_package(self) -> None:
         event = make_event_with_hypothesis()
 
-        agent_state = build_agent_state(event.hypothesis_package)
+        agent_state = build_agent_state(
+            event.hypothesis_package,
+            process_direction=ProcessDirection.UNKNOWN,
+        )
 
         self.assertEqual(agent_state.event_id, event.hypothesis_package.event_id)
         self.assertEqual(
@@ -66,10 +85,14 @@ class AgentStateManagerTests(unittest.TestCase):
     def test_agent_state_produces_valid_agent_state(self) -> None:
         event = make_event_with_hypothesis()
 
-        agent_state = build_agent_state(event.hypothesis_package)
+        agent_state = build_agent_state(
+            event.hypothesis_package,
+            process_direction=ProcessDirection.UNKNOWN,
+        )
 
         self.assertIsInstance(agent_state, AgentState)
         self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
+        self.assertIs(agent_state.process_direction, ProcessDirection.UNKNOWN)
         self.assertEqual(agent_state.previous_state, AgentStateType.UNKNOWN)
         self.assertEqual(
             agent_state.state_transition_status,
@@ -80,7 +103,7 @@ class AgentStateManagerTests(unittest.TestCase):
     def test_agent_state_writes_only_agent_state(self) -> None:
         event = make_event_with_hypothesis()
 
-        updated = add_agent_state(event)
+        updated = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
         self.assertIsNot(updated, event)
         self.assertIs(event.market_snapshot, updated.market_snapshot)
@@ -105,7 +128,7 @@ class AgentStateManagerTests(unittest.TestCase):
         efficiency_before = event.market_efficiency_evidence.to_dict()
         hypothesis_before = event.hypothesis_package.to_dict()
 
-        updated = add_agent_state(event)
+        updated = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
         self.assertEqual(updated.market_snapshot.to_dict(), snapshot_before)
         self.assertEqual(updated.observation_package.to_dict(), observations_before)
@@ -127,12 +150,12 @@ class AgentStateManagerTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(AgentStateError, "hypothesis_package"):
-            add_agent_state(event)
+            add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
     def test_agent_state_uses_unknown_when_evidence_is_insufficient(self) -> None:
         event = make_event_with_hypothesis()
 
-        updated = add_agent_state(event)
+        updated = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
         self.assertEqual(updated.agent_state.current_state, AgentStateType.UNKNOWN)
         self.assertIn("insufficient", updated.agent_state.transition_reason)
@@ -153,17 +176,32 @@ class AgentStateManagerTests(unittest.TestCase):
     ) -> None:
         hypothesis = HypothesisPackage(
             event_id="runtime-evt-1",
+            episode_id="episode-test-1",
+            hypothesis_id="hypothesis-test-1",
             hypothesis_label="current_condition_explanation",
             hypothesis_summary="Mock stronger current-condition explanation.",
-            supporting_evidence=("structure:mock_sequence",),
+            supporting_evidence=(HypothesisEvidenceReference(
+                source_event_id="runtime-evt-1",
+                source_section="structural_evidence",
+                evidence_key="mock_sequence",
+                description="Mock structural sequence.",
+            ),),
             contradicting_evidence=(),
-            competing_hypotheses=(),
+            explanation_confidence_score=50,
             current_hypothesis_confidence_context=ConfidenceLevel.MEDIUM,
             reasoning_notes="Mock hypothesis for conservative v0.1 policy.",
             uncertainty=UncertaintyLevel.LOW,
+            semantic_code=HypothesisSemanticCode.UNRESOLVED,
+            lifecycle_status=HypothesisLifecycleStatus.CREATED,
+            previous_hypothesis_id=None,
+            previous_runtime_event_id=None,
+            hypothesis_change_reason="Initial hypothesis for the test episode.",
         )
 
-        agent_state = build_agent_state(hypothesis)
+        agent_state = build_agent_state(
+            hypothesis,
+            process_direction=ProcessDirection.UNKNOWN,
+        )
 
         self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
         self.assertIn("insufficient", agent_state.transition_reason)
@@ -173,6 +211,7 @@ class AgentStateManagerTests(unittest.TestCase):
 
         updated = add_agent_state(
             event,
+            process_direction=ProcessDirection.UNKNOWN,
             previous_state=AgentStateType.IGNITION,
         )
 
@@ -183,233 +222,26 @@ class AgentStateManagerTests(unittest.TestCase):
             StateTransitionStatus.CHANGED,
         )
 
-    def test_market_hypothesis_uppercase_state_normalization(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 1.1,
-                "price_change_3m": 1.5,
-                "volume_spike_ratio": 8.1,
-                "oi_change_1m": 0.1,
-            }
-        )
+    def test_process_direction_is_required_typed_serializable_and_immutable(self) -> None:
+        event = make_event_with_hypothesis()
 
-        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
+        with self.assertRaises(TypeError):
+            build_agent_state(event.hypothesis_package)  # type: ignore[call-arg]
 
-        self.assertEqual(agent_state.current_state, AgentStateType.IGNITION)
-        self.assertEqual(agent_state.previous_state, AgentStateType.UNKNOWN)
-        self.assertEqual(
-            agent_state.supporting_evidence,
-            hypothesis.supporting_evidence,
-        )
-        self.assertEqual(
-            agent_state.blocking_evidence,
-            hypothesis.contradicting_evidence,
-        )
-        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.MEDIUM)
+        for direction in ProcessDirection:
+            state = build_agent_state(
+                event.hypothesis_package,
+                process_direction=direction,
+            )
+            self.assertEqual(state.to_dict()["process_direction"], direction.value)
+            with self.assertRaises(FrozenInstanceError):
+                state.process_direction = ProcessDirection.UNKNOWN
 
-    def test_market_hypothesis_bridge_uses_provided_event_id(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 1.1,
-                "price_change_3m": 1.5,
-                "volume_spike_ratio": 8.1,
-                "oi_change_1m": 0.1,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            event_id="runtime-cycle-1",
-        )
-
-        self.assertEqual(agent_state.event_id, "runtime-cycle-1")
-
-    def test_market_hypothesis_bridge_falls_back_to_hypothesis_id(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 1.1,
-                "price_change_3m": 1.5,
-                "volume_spike_ratio": 8.1,
-                "oi_change_1m": 0.1,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
-
-        self.assertEqual(agent_state.event_id, hypothesis.id)
-
-    def test_market_hypothesis_unknown_state_fallback(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.0,
-                "price_change_3m": 0.0,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
-
-        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
-        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.UNKNOWN)
-        self.assertIn("conservatively unmapped", agent_state.transition_reason)
-
-    def test_market_hypothesis_continuation_alive_maps_directly(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.5,
-                "price_change_3m": 2.1,
-                "volume_spike_ratio": 5.1,
-                "oi_change_1m": 0.6,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(hypothesis)
-
-        self.assertEqual(hypothesis.market_state, "CONTINUATION_ALIVE")
-        self.assertEqual(agent_state.current_state, AgentStateType.CONTINUATION_ALIVE)
-        self.assertEqual(agent_state.state_confidence_context, ConfidenceLevel.MEDIUM)
-
-    def test_market_hypothesis_weakening_from_unknown_stays_unknown(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.1,
-                "price_change_3m": 0.5,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            previous_state=AgentStateType.UNKNOWN,
-        )
-
-        self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
-        self.assertEqual(agent_state.previous_state, AgentStateType.UNKNOWN)
-        self.assertEqual(
-            agent_state.state_transition_status,
-            StateTransitionStatus.UNCHANGED,
-        )
-        self.assertIn("WEAKENING", agent_state.transition_reason)
-
-    def test_market_hypothesis_weakening_from_ignition_stays_unknown(self) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.1,
-                "price_change_3m": 0.5,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            previous_state=AgentStateType.IGNITION,
-        )
-
-        self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(agent_state.current_state, AgentStateType.UNKNOWN)
-        self.assertEqual(agent_state.previous_state, AgentStateType.IGNITION)
-        self.assertEqual(
-            agent_state.state_transition_status,
-            StateTransitionStatus.CHANGED,
-        )
-        self.assertIn("WEAKENING", agent_state.transition_reason)
-
-    def test_market_hypothesis_weakening_from_continuation_alive_saturates(
-        self,
-    ) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.1,
-                "price_change_3m": 0.5,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            previous_state=AgentStateType.CONTINUATION_ALIVE,
-        )
-
-        self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(
-            agent_state.current_state,
-            AgentStateType.CONTINUATION_SATURATION,
-        )
-        self.assertEqual(agent_state.previous_state, AgentStateType.CONTINUATION_ALIVE)
-        self.assertEqual(
-            agent_state.state_transition_status,
-            StateTransitionStatus.CHANGED,
-        )
-        self.assertIn("WEAKENING", agent_state.transition_reason)
-
-    def test_market_hypothesis_weakening_from_saturation_becomes_failure_candidate(
-        self,
-    ) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.1,
-                "price_change_3m": 0.5,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            previous_state=AgentStateType.CONTINUATION_SATURATION,
-        )
-
-        self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(
-            agent_state.current_state,
-            AgentStateType.FIRST_FAILURE_CANDIDATE,
-        )
-        self.assertEqual(
-            agent_state.previous_state,
-            AgentStateType.CONTINUATION_SATURATION,
-        )
-        self.assertEqual(
-            agent_state.state_transition_status,
-            StateTransitionStatus.CHANGED,
-        )
-        self.assertIn("WEAKENING", agent_state.transition_reason)
-
-    def test_market_hypothesis_weakening_from_failure_candidate_stays_candidate(
-        self,
-    ) -> None:
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.1,
-                "price_change_3m": 0.5,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            previous_state=AgentStateType.FIRST_FAILURE_CANDIDATE,
-        )
-
-        self.assertEqual(hypothesis.market_state, "WEAKENING")
-        self.assertEqual(
-            agent_state.current_state,
-            AgentStateType.FIRST_FAILURE_CANDIDATE,
-        )
-        self.assertEqual(
-            agent_state.previous_state,
-            AgentStateType.FIRST_FAILURE_CANDIDATE,
-        )
-        self.assertEqual(
-            agent_state.state_transition_status,
-            StateTransitionStatus.UNCHANGED,
-        )
-        self.assertIn("WEAKENING", agent_state.transition_reason)
+        with self.assertRaisesRegex(ValueError, "ProcessDirection"):
+            build_agent_state(
+                event.hypothesis_package,
+                process_direction="up",  # type: ignore[arg-type]
+            )
 
     def test_agent_state_does_not_import_later_runtime_contracts(self) -> None:
         tree = ast.parse(AGENT_STATE_MANAGER.read_text(encoding="utf-8"))

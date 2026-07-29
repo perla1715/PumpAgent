@@ -98,6 +98,7 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
 
     _validate_market_snapshot_identity(event)
     _validate_runtime_owned_event_ids(event)
+    _validate_confidence_source_identity(event)
 
     if event.observation_package is not None:
         _validate_section_event_id(event, "observation_package")
@@ -106,6 +107,7 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
         return LearningMemoryExportCategory.REVIEW_ONLY
 
     _validate_section_event_id(event, "scenario_probability")
+    _validate_scenario_source_identity(event)
     return LearningMemoryExportCategory.CASE_READY
 
 
@@ -133,10 +135,45 @@ def _validate_runtime_owned_event_ids(event: RuntimeEvent) -> None:
 
 def _validate_section_event_id(event: RuntimeEvent, section_name: str) -> None:
     section = getattr(event, section_name)
-    if section.event_id != event.event_id:
+    section_event_id = (
+        section.runtime_event_id
+        if section_name == "scenario_probability"
+        else section.event_id
+    )
+    if section_event_id != event.event_id:
         raise LearningMemoryError(
-            f"RuntimeEvent.{section_name}.event_id must match "
+            f"RuntimeEvent.{section_name} event ID must match "
             "RuntimeEvent.event_id."
+        )
+
+
+def _validate_scenario_source_identity(event: RuntimeEvent) -> None:
+    scenario = event.scenario_probability
+    hypothesis = event.hypothesis_package
+    if scenario.episode_id != hypothesis.episode_id:
+        raise LearningMemoryError(
+            "RuntimeEvent.scenario_probability.episode_id must match "
+            "RuntimeEvent.hypothesis_package.episode_id."
+        )
+    if scenario.source_hypothesis_id != hypothesis.hypothesis_id:
+        raise LearningMemoryError(
+            "RuntimeEvent.scenario_probability.source_hypothesis_id must match "
+            "RuntimeEvent.hypothesis_package.hypothesis_id."
+        )
+
+
+def _validate_confidence_source_identity(event: RuntimeEvent) -> None:
+    confidence = event.confidence_assessment
+    hypothesis = event.hypothesis_package
+    if confidence.episode_id != hypothesis.episode_id:
+        raise LearningMemoryError(
+            "RuntimeEvent.confidence_assessment.episode_id must match "
+            "RuntimeEvent.hypothesis_package.episode_id."
+        )
+    if confidence.source_hypothesis_id != hypothesis.hypothesis_id:
+        raise LearningMemoryError(
+            "RuntimeEvent.confidence_assessment.source_hypothesis_id must match "
+            "RuntimeEvent.hypothesis_package.hypothesis_id."
         )
 
 

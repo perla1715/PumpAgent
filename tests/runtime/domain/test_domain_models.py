@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
@@ -16,13 +17,22 @@ from pumpagent.runtime.domain import (
     AgentState,
     ConfidenceAssessment,
     DecisionAlert,
+    HypothesisEvidenceReference,
+    HypothesisLifecycleStatus,
     HypothesisPackage,
+    HypothesisSemanticCode,
     LearningMetadata,
     MarketEfficiencyEvidence,
     MarketSnapshot,
     ObservationPackage,
     RuntimeEvent,
     ScenarioProbability,
+    ScenarioArtifactType,
+    ScenarioAssessmentStatus,
+    ScenarioIdentifier,
+    ScenarioProvenanceReference,
+    ScenarioReasonCode,
+    ScenarioWeight,
     StructuralEvidence,
 )
 from pumpagent.runtime.domain.enums import (
@@ -32,6 +42,7 @@ from pumpagent.runtime.domain.enums import (
     DataQualityStatus,
     DecisionType,
     EvidenceStrength,
+    ProcessDirection,
     ReviewStatus,
     RuntimeStatus,
     StateTransitionStatus,
@@ -113,13 +124,21 @@ def make_market_efficiency_evidence() -> MarketEfficiencyEvidence:
 def make_hypothesis_package() -> HypothesisPackage:
     return HypothesisPackage(
         event_id="evt-1",
+        episode_id="episode-1",
+        hypothesis_id="hypothesis-1",
         hypothesis_label="continuation_alive",
         hypothesis_summary="Continuation remains valid but quality is weakening.",
-        supporting_evidence=("structure intact",),
-        contradicting_evidence=("participation weakening",),
-        competing_hypotheses=({"label": "saturation", "confidence_context": "medium"},),
+        supporting_evidence=(HypothesisEvidenceReference("evt-1", "structural_evidence", "structure-intact", "Structure intact"),),
+        contradicting_evidence=(HypothesisEvidenceReference("evt-1", "market_efficiency_evidence", "participation-weakening", "Participation weakening"),),
+        explanation_confidence_score=50,
         current_hypothesis_confidence_context=ConfidenceLevel.MEDIUM,
         reasoning_notes="Current explanation only.",
+        uncertainty=UncertaintyLevel.MEDIUM,
+        semantic_code=HypothesisSemanticCode.CONTINUATION_EXPLANATION,
+        lifecycle_status=HypothesisLifecycleStatus.CREATED,
+        previous_hypothesis_id=None,
+        previous_runtime_event_id=None,
+        hypothesis_change_reason="Initial hypothesis for the episode.",
     )
 
 
@@ -127,6 +146,7 @@ def make_agent_state() -> AgentState:
     return AgentState(
         event_id="evt-1",
         current_state=AgentStateType.CONTINUATION_ALIVE,
+        process_direction=ProcessDirection.UP,
         previous_state=AgentStateType.IGNITION,
         state_transition_status=StateTransitionStatus.CHANGED,
         transition_reason="Structure and participation support continuation.",
@@ -137,26 +157,87 @@ def make_agent_state() -> AgentState:
 
 
 def make_scenario_probability() -> ScenarioProbability:
+    current_provenance = (
+        ScenarioProvenanceReference(
+            artifact_type=ScenarioArtifactType.PROCESS_EVIDENCE,
+            artifact_id="process-evidence:episode-1:evt-1",
+            episode_id="episode-1",
+            runtime_event_id="evt-1",
+            observation_timestamp=NOW,
+        ),
+        ScenarioProvenanceReference(
+            artifact_type=ScenarioArtifactType.PROCESS_QUALITY,
+            artifact_id="process-quality-assessment:episode-1:evt-1",
+            episode_id="episode-1",
+            runtime_event_id="evt-1",
+            observation_timestamp=NOW,
+        ),
+        ScenarioProvenanceReference(
+            artifact_type=ScenarioArtifactType.HYPOTHESIS,
+            artifact_id="hypothesis-1",
+            episode_id="episode-1",
+            runtime_event_id="evt-1",
+            observation_timestamp=NOW,
+        ),
+    )
     return ScenarioProbability(
-        event_id="evt-1",
-        scenario_set=("continuation_persists", "saturation_develops"),
-        scenario_probabilities={
-            "continuation_persists": 0.55,
-            "saturation_develops": 0.45,
-        },
-        primary_scenario="continuation_persists",
-        alternative_scenarios=("saturation_develops",),
-        supporting_evidence=("state continuation_alive",),
-        contradicting_evidence=("participation weakening",),
+        scenario_probability_id=(
+            "scenario-probability:episode-1:evt-1:hypothesis-1"
+        ),
+        episode_id="episode-1",
+        runtime_event_id="evt-1",
+        observation_timestamp=NOW,
+        created_at=NOW,
+        source_process_evidence_id="process-evidence:episode-1:evt-1",
+        source_process_quality_assessment_id=(
+            "process-quality-assessment:episode-1:evt-1"
+        ),
+        source_hypothesis_id="hypothesis-1",
+        source_healthy_baseline_id=None,
+        previous_scenario_probability_id=None,
+        hypothesis_semantic_code=(
+            HypothesisSemanticCode.CONTINUATION_EXPLANATION
+        ),
+        status=ScenarioAssessmentStatus.COMPLETED,
+        distribution=(
+            ScenarioWeight(
+                ScenarioIdentifier.CONTINUE_OBSERVATION,
+                Decimal("0.100000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.CONTINUATION_PERSISTS,
+                Decimal("0.650000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.SATURATION_PERSISTS,
+                Decimal("0.150000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.FAILURE_CANDIDATE_PERSISTS,
+                Decimal("0.070000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.FIRST_FAILURE_CONFIRMS,
+                Decimal("0.030000"),
+            ),
+        ),
+        primary_scenario=ScenarioIdentifier.CONTINUATION_PERSISTS,
         uncertainty=UncertaintyLevel.MEDIUM,
-        monitoring_focus=("failed reclaim",),
-        metadata={"source": "fixture", "weights": [0.55, 0.45]},
+        reason_codes=(
+            ScenarioReasonCode.PROCESS_CONTINUATION_ALIVE,
+            ScenarioReasonCode.PRIMARY_SCENARIO_QUALIFIED,
+        ),
+        supporting_provenance=current_provenance,
+        contradicting_provenance=(),
+        missing_prerequisites=(),
     )
 
 
 def make_confidence_assessment() -> ConfidenceAssessment:
     return ConfidenceAssessment(
         event_id="evt-1",
+        episode_id="episode-1",
+        source_hypothesis_id="hypothesis-1",
         final_confidence_level=ConfidenceLevel.MEDIUM,
         confidence_summary="Moderate reliability.",
         confidence_drivers=("structure intact",),
@@ -213,6 +294,26 @@ def make_runtime_event() -> RuntimeEvent:
 
 
 class RuntimeDomainModelTests(unittest.TestCase):
+    def test_hypothesis_semantic_code_is_typed_and_finite(self) -> None:
+        self.assertEqual(
+            tuple(item.value for item in HypothesisSemanticCode),
+            (
+                "unresolved",
+                "continuation_explanation",
+                "weakening_explanation",
+                "recovery_explanation",
+            ),
+        )
+        self.assertIs(
+            make_hypothesis_package().semantic_code,
+            HypothesisSemanticCode.CONTINUATION_EXPLANATION,
+        )
+        values = make_hypothesis_package().__dict__ | {
+            "semantic_code": "continuation_explanation"
+        }
+        with self.assertRaisesRegex(ValueError, "HypothesisSemanticCode"):
+            HypothesisPackage(**values)
+
     def test_runtime_event_can_hold_complete_reasoning_cycle(self) -> None:
         event = make_runtime_event()
 
@@ -252,9 +353,15 @@ class RuntimeDomainModelTests(unittest.TestCase):
             snapshot.optional_market_metrics["open_interest"] = 1300
 
         with self.assertRaises(TypeError):
-            scenario.metadata["source"] = "changed"
+            scenario.distribution[0] = ScenarioWeight(
+                ScenarioIdentifier.CONTINUE_OBSERVATION,
+                Decimal("0.200000"),
+            )
 
-        self.assertIsInstance(scenario.metadata["weights"], tuple)
+        with self.assertRaises(FrozenInstanceError):
+            scenario.distribution[0].probability = Decimal("0.200000")
+
+        self.assertIsInstance(scenario.distribution, tuple)
 
     def test_runtime_event_replacement_returns_new_instance(self) -> None:
         event = RuntimeEvent(
@@ -387,7 +494,17 @@ class RuntimeDomainModelTests(unittest.TestCase):
             "expanding",
         )
         self.assertEqual(
-            serialized["scenario_probability"]["metadata"]["weights"], [0.55, 0.45]
+            serialized["scenario_probability"]["distribution"][1]["probability"],
+            "0.650000",
+        )
+        self.assertEqual(serialized["confidence_assessment"]["event_id"], "evt-1")
+        self.assertEqual(
+            serialized["confidence_assessment"]["episode_id"],
+            "episode-1",
+        )
+        self.assertEqual(
+            serialized["confidence_assessment"]["source_hypothesis_id"],
+            "hypothesis-1",
         )
 
 

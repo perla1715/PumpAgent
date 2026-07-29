@@ -116,6 +116,7 @@ Learning Memory is not part of the current Runtime Orchestrator path.
 - [Structure Engine](docs/05_STRUCTURE_ENGINE.md)
 - [Market Efficiency Engine](docs/06_MARKET_EFFICIENCY_ENGINE.md)
 - [Hypothesis Engine](docs/07_HYPOTHESIS_ENGINE.md)
+- [Observation Lifecycle Contract v1](docs/10_OBSERVATION_LIFECYCLE.md)
 - [Scanner V2 Data Contract](docs/scanner_v2_data_contract.md)
 - [Scanner V2 Output Schema](docs/scanner_v2_output_schema.json)
 - [Scanner V2 Sample Output](docs/scanner_v2_sample_output.json)

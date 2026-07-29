@@ -10,10 +10,10 @@ from pumpagent.runtime.modules.hypothesis.evaluator import (
 )
 from pumpagent.runtime.modules.hypothesis.engine import (
     HypothesisError,
-    MarketHypothesis,
     add_hypothesis_package,
-    build_hypothesis,
     build_hypothesis_package,
+    build_operational_hypothesis_package,
+    generate_hypothesis_id,
 )
 from pumpagent.runtime.modules.hypothesis.snapshot import (
     HistoryTrendAnalyzer,
@@ -39,7 +39,6 @@ __all__ = [
     "HistoryTrendAnalyzer",
     "HistoryTrendSummary",
     "HypothesisHistory",
-    "MarketHypothesis",
     "HypothesisSnapshot",
     "HypothesisSnapshotBuilder",
     "TREND_IMPROVING",
@@ -47,7 +46,8 @@ __all__ = [
     "TREND_UNKNOWN",
     "TREND_WEAKENING",
     "add_hypothesis_package",
-    "build_hypothesis",
     "build_hypothesis_package",
+    "build_operational_hypothesis_package",
+    "generate_hypothesis_id",
     "build_hypothesis_snapshot",
 ]

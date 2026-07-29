@@ -25,6 +25,7 @@ Its position is:
 
 ```text
 Hypothesis Engine
+-> Agent State Engine
 -> Scenario Probability Engine
 -> Confidence Engine
 ```
@@ -117,21 +118,15 @@ Scenario probabilities describe what may happen next.
 
 ## Inputs
 
-The Scenario Probability Engine may use:
+The current canonical engine receives only:
 
-- current hypothesis;
-- current market state;
-- structure evidence;
-- market efficiency evidence;
-- current hypothesis confidence;
-- prior confidence context;
-- data quality;
-- score dimensions;
-- recent state transitions;
-- historical priors, when available.
+- the current `HypothesisPackage` conclusion and its typed evidence references;
+- the canonical `AgentState` conclusion;
+- Runtime cycle identity and active Observation Episode identity for alignment.
 
-Historical priors must be treated carefully. They may support reasoning, but
-they must not override current evidence.
+It does not inspect raw market data, independently reinterpret Structure or
+Market Efficiency, use historical priors, or couple its weights to explanation
+confidence.
 
 ---
 
@@ -148,6 +143,11 @@ The engine produces:
 - notes for Confidence Engine.
 
 The output should remain explanatory.
+
+`monitoring_focus` is descriptive. It names evidence themes or developments
+that a subsequent Runtime observation should examine; it is not an executable
+condition, threshold, formal confirmation or invalidation rule, or switching
+trigger.
 
 It should not produce trading signals.
 

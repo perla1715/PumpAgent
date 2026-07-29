@@ -16,9 +16,11 @@ from pumpagent.runtime.orchestrator.runtime_loop import (
     RuntimeOrchestrator,
     run_agent_cycle,
 )
+from pumpagent.runtime.modules.market_eligibility import MarketEligibilityResult
 
 __all__ = [
     "AgentCycleResult",
+    "MarketEligibilityResult",
     "DiagnosticRuntimeReport",
     "DiagnosticRuntimeReportBuilder",
     "FixtureRuntimeStage",

@@ -26,6 +26,27 @@ reasoning after market data has been converted into a Runtime `MarketSnapshot`.
 It observes the market, builds the current explanation, estimates possible next
 scenarios, evaluates confidence, and produces non-execution decisions or alerts.
 
+## Canonical Observation Lifecycle
+
+The [Observation Lifecycle Contract v1](10_OBSERVATION_LIFECYCLE.md) defines
+the canonical temporal architecture for PumpAgent MVP.
+
+Scanner requests attention but does not open, continue, replace, or close an
+Observation Episode. Observation Policy alone owns those lifecycle decisions.
+Runtime initiates one Observation Cycle for each newly closed, valid 5-minute
+candle and associates it with exactly one active Episode. Every downstream
+analytical artifact carries that Episode's identity, and no history crosses an
+Episode boundary automatically.
+
+The canonical lifecycle is:
+
+`Scanner Request -> Observation Policy -> Observation Episode -> Observation Cycles -> Process Reasoning -> Hypothesis -> Agent State -> Confidence -> Trading Recommendation -> Episode Closure`
+
+The lifecycle contract is an approved architectural boundary, not a statement
+that Observation Policy or Episode-aware orchestration is already implemented.
+The lightweight Runtime Loop and older `RuntimeEvent` path described below are
+current implementation paths being evolved toward this contract.
+
 ---
 
 # Implemented Data-To-Runtime Flow
@@ -89,26 +110,48 @@ State Update
 
 ↓
 
+Scenario Probability
+
+↓
+
+ConfidenceAssessment
+
+↓
+
 AgentCycleResult
+
+↓
+
+successful EpisodeAnalyticalContext commit
 
 The Runtime Orchestrator coordinates this reasoning loop for each market
 update. It receives one `MarketSnapshot`, builds structure and market
 efficiency evidence, combines them with snapshot metrics, builds the current
-hypothesis, maps the hypothesis state into canonical `AgentState`, and returns
-an `AgentCycleResult`.
+hypothesis, maps the hypothesis state into canonical `AgentState`, builds
+Scenario Probability from those canonical conclusions, assesses final chain
+reliability, and returns an `AgentCycleResult`.
 
 The Runtime Orchestrator does not make trading decisions, persist state,
 communicate with users, or call external services.
 
-The older `RuntimeEvent` contract modules for Agent State, Scenario Probability,
-Confidence Assessment, and Decision / Alert remain available as separate
-section-owning contracts while the lightweight runtime loop is established.
+Canonical `AgentState` carries two orthogonal dimensions: `current_state`
+describes process health or stage, while `process_direction` transports the
+typed Process Classification orientation `UP`, `DOWN`, `NEUTRAL`, or `UNKNOWN`.
+Process Classification is the single mechanical direction source. Direction is
+not a trading Decision: `UP` does not mean `LOOK_FOR_LONG`, and `DOWN` does not
+mean `LOOK_FOR_SHORT`. Directional Decision policy remains outside this Runtime
+slice until trader-approved rules exist.
+
+The older `RuntimeEvent` fixture path remains available only through Agent
+State. Its Scenario Probability, Confidence, and Decision / Alert stages are
+retired because that aggregate does not carry the authenticated Process
+Evidence and Process Quality contracts required by canonical Scenario
+Probability.
 
 The fixture Runtime Orchestrator still supports immutable `RuntimeEvent`
-handoff for the older module contract path. It does not perform market
-analysis, classify alerts, access Live Data, or execute trades.
-
-The older `RuntimeEvent` contract path currently ends at Decision / Alert.
+handoff through Agent State for fixture compatibility. It does not perform
+market analysis, fabricate missing Process contracts, classify alerts, access
+Live Data, or execute trades.
 
 Learning Memory is not orchestrated by the Runtime Orchestrator.
 
@@ -161,6 +204,7 @@ The first complete agent reasoning cycle returns `AgentCycleResult` with:
 - new state;
 - canonical agent state;
 - hypothesis;
+- canonical Scenario Probability;
 - confidence;
 - evidence;
 - timestamp;
@@ -200,9 +244,11 @@ Runtime logging is currently a side-effect-free serialization layer.
 
 `serialize_agent_cycle_result(result)` converts an `AgentCycleResult` into a
 plain dictionary with cycle identity, timestamp, market identity, state,
-hypothesis, confidence, evidence, and agent state identity fields.
+hypothesis, Scenario Probability, canonical ConfidenceAssessment, temporary
+explanation-confidence compatibility score, evidence, and Agent State identity
+fields.
 
-The current schema version is `runtime_cycle_v1`. Future changes to the log
+The current schema version is `runtime_cycle_v4`. Future changes to the log
 shape should create a new schema version instead of silently changing existing
 fields.
 
@@ -216,19 +262,14 @@ compatibility `previous_state` and `new_state` strings are derived from
 
 Each runtime loop cycle has a deterministic event id derived from snapshot
 identity, symbol, exchange, timeframe, and timestamp. This cycle event id is
-passed into `AgentState.event_id`, while `MarketHypothesis.id` remains a
-semantic hypothesis identifier.
+passed into `AgentState.event_id` and `HypothesisPackage.event_id`. Hypothesis
+identity is a separate opaque UUIDv4 string controlled by canonical hypothesis
+lifecycle rules.
 
-Detected `WEAKENING` is staged by previous official state. From `UNKNOWN` or
-`IGNITION`, it remains `UNKNOWN`. From `CONTINUATION_ALIVE`, it becomes
-`CONTINUATION_SATURATION`. From `CONTINUATION_SATURATION`, it becomes
-`FIRST_FAILURE_CANDIDATE`. Repeated weakening while already in
-`FIRST_FAILURE_CANDIDATE` remains `FIRST_FAILURE_CANDIDATE`.
-
-The clean `HypothesisPackage` path remains conservative and returns
-`AgentStateType.UNKNOWN` until the clean hypothesis contract contains explicit
-state context. Agent State must translate upstream state context; it must not
-infer official state from generic evidence.
+The canonical Agent State boundary consumes `HypothesisPackage`, the already
+classified Process State, and existing operational evidence. Agent State must
+translate approved upstream state context; it must not infer new state or
+trading rules from generic evidence.
 
 ### Dynamic Watchlist MVP
 
@@ -519,112 +560,111 @@ confidence, produce trading signals, or orchestrate Runtime behavior.
 
 Status: implemented MVP.
 
-Creates current-market explanations from prepared Runtime context.
+`HypothesisPackage` is the single canonical hypothesis contract and the sole
+full hypothesis object produced by the controlled Runtime.
 
-The current implementation has two paths:
+The engine consumes structural evidence, market-efficiency evidence, current
+Process evidence, the active Observation Episode identity, and the previous
+committed canonical package when available. It produces one immutable package
+without mutating upstream evidence.
 
-- clean `HypothesisPackage` path;
-- legacy / Runtime scanner `MarketHypothesis` path.
+Primary APIs:
 
-### Clean HypothesisPackage Path
+- `build_hypothesis_package()`;
+- `add_hypothesis_package()`;
+- `build_operational_hypothesis_package()`;
+- `generate_hypothesis_id()`.
 
-The clean package path consumes:
+Observation Lifecycle exclusively owns `episode_id`. The Hypothesis Engine
+owns lifecycle interpretation and decides whether to keep identity or request a
+new one. The injected production generator mechanically returns a UUIDv4 string
+without receiving semantic inputs.
 
-- `StructuralEvidence`
-- `MarketEfficiencyEvidence`
+Canonical lifecycle is deterministic:
 
-It produces `HypothesisPackage`.
+- no previous package in the episode: `CREATED`, new ID;
+- changed label: `REPLACED`, new ID;
+- unchanged label with a lower exact `explanation_confidence_score`:
+  `WEAKENED`, retained ID;
+- unchanged label with an equal or higher exact score: `UPDATED`, retained
+  ID.
 
-Preferred package APIs:
+Every non-created package retains canonical predecessor hypothesis and Runtime
+event references. Continuity cannot cross Observation Episode boundaries.
 
-- `build_hypothesis_package()`
-- `add_hypothesis_package()`
+`explanation_confidence_score` is the Hypothesis Engine's 0-100 explanation
+strength and is distinct from final Runtime confidence. Its categorical context
+remains in `current_hypothesis_confidence_context`.
 
-This path combines upstream objective evidence into a current-condition
-explanation. It does not mutate upstream evidence.
+Only successful Observation Cycle completion commits the canonical package to
+`EpisodeAnalyticalContext` and its ID projection to the Watchlist. Ineligible
+and failed cycles leave previous continuity unchanged.
 
-### Legacy / Runtime Scanner MarketHypothesis Path
+The canonical Agent State bridge consumes the package plus already-produced
+Process State and operational evidence. It does not introduce state or trading
+rules.
 
-The legacy Runtime scanner path remains for compatibility.
+Diagnostic helpers remain available:
 
-API:
+- `HypothesisSnapshot`;
+- `HypothesisHistory`;
+- `HistoryTrendAnalyzer`;
+- `HypothesisEvaluator`.
 
-- `build_hypothesis()`
-
-This path consumes arbitrary Runtime scanner data and may call:
-
-- `detect_market_state()`
-- `calculate_confidence()`
-- `collect_evidence()`
-
-It produces `MarketHypothesis` and supports the main Runtime scanner-style flow.
-
-### Public Hypothesis Exports
-
-Core exports:
-
-- `HypothesisError`
-- `MarketHypothesis`
-- `build_hypothesis()`
-- `build_hypothesis_package()`
-- `add_hypothesis_package()`
-
-Snapshot, history, and evaluator exports:
-
-- `HypothesisSnapshot`
-- `HypothesisSnapshotBuilder`
-- `HypothesisHistory`
-- `HistoryTrendAnalyzer`
-- `HistoryTrendSummary`
-- `build_hypothesis_snapshot()`
-- `HypothesisEvaluator`
-- `HypothesisEvaluation`
-- trend constants
-- evaluation constants
-
-### Lifecycle And Confidence
-
-Hypothesis lifecycle statuses are:
-
-- `CREATED`
-- `UPDATED`
-- `WEAKENED`
-- `REPLACED`
-
-The legacy `MarketHypothesis` path may contain a numeric `confidence_score`.
-
-The clean package path emits `current_hypothesis_confidence_context`.
-
-`current_hypothesis_confidence_context` is not final market confidence and not
-trade confidence. Final confidence remains the responsibility of the Confidence
-Engine if or when that layer is used.
-
-### Diagnostic Context
-
-The MVP also includes diagnostic support objects:
-
-- `HypothesisSnapshot`
-- `HypothesisHistory`
-- `HistoryTrendAnalyzer`
-- `HypothesisEvaluator`
-
-These are deterministic diagnostic helpers. They do not modify Runtime behavior,
-confidence, hypotheses, alerts, probabilities, or trading decisions.
-
-### Boundaries
-
-The Hypothesis Engine may form, update, weaken, or replace hypotheses.
-
-It does not fetch market data directly, mutate upstream evidence, produce final
-trading execution commands, own Telegram alerts, own Runtime orchestration, own
-future scenario probabilities, or own final trade confidence.
-
----
+The Hypothesis Engine does not fetch market data, own Observation Episode
+identity, calculate Scenario Probability or final Confidence, produce alerts,
+execute trades, persist data, or orchestrate Runtime behavior.
 
 ## 5. Scenario Probability Engine
 
 Estimates possible next scenarios after the current hypothesis and official
 current Agent State have been built.
+
+### Scenario Probability Philosophy
+
+Scenario Probability is an episode-bound translation of the canonical
+`HypothesisPackage` and `AgentState` conclusions into possible paths for the
+next Runtime horizon. It uses deterministic policy weights, not calibrated
+forecasts, and does not inspect candles, price, volume, open interest, CVD, or
+other raw market data.
+
+Its canonical identities remain distinct: `event_id` identifies the Runtime
+cycle, `episode_id` identifies the active Observation Episode, and
+`source_hypothesis_id` identifies the explanation that produced the scenario
+set. Supporting and contradicting evidence remain typed
+`HypothesisEvidenceReference` values.
+
+`monitoring_focus` contains descriptive evidence themes or developments that
+subsequent Runtime observations should examine. It is not an executable
+condition, threshold, confirmation rule, invalidation rule, or scenario-switch
+trigger.
+
+Every valid analytical cycle may rebuild the distribution after Agent State.
+Only successful cycle completion may commit it to episode continuity. Scenario
+Probability does not own alerts, actions, Agent State transitions, Hypothesis
+lifecycle, or Observation Episode lifecycle.
+
+The controlled operational chain is:
+
+```text
+HypothesisPackage
+    ↓
+Agent State
+    ↓
+Scenario Probability
+    ↓
+ConfidenceAssessment
+    ↓
+AgentCycleResult
+    ↓
+successful EpisodeAnalyticalContext commit
+```
+
+Ineligible cycles, failed cycles, identity-validation failures, and completion
+rejections preserve the previously committed Scenario Probability and
+ConfidenceAssessment unchanged.
+The Runtime orchestrates this call but does not reinterpret scenarios. Formal
+confirmation and invalidation rules remain outside the MVP.
 
 Example:
 
@@ -665,7 +705,7 @@ Current state-aware policy:
 
 The engine must not inspect raw market data, reinterpret Structure or Market
 Efficiency evidence, decide final confidence, generate alerts, or make trading
-decisions.
+decisions. Unsupported Agent States use the existing `UNKNOWN` policy.
 
 ---
 
@@ -673,6 +713,43 @@ decisions.
 
 Evaluates the final reliability of the current hypothesis, Agent State, and
 scenario probabilities.
+
+### Confidence Philosophy
+
+`ConfidenceAssessment` is the canonical final reliability classification for
+the complete current analytical chain. It evaluates conclusions already
+produced by `HypothesisPackage`, Agent State, and Scenario Probability. It does
+not inspect raw market data, predict direction, measure opportunity strength,
+trigger action, or replace any upstream conclusion.
+
+The confidence concepts remain deliberately separate:
+
+```text
+Hypothesis explanation confidence
+    != Scenario Probability weights
+    != Scenario uncertainty
+    != ConfidenceAssessment
+```
+
+Every assessment is bound to its Runtime `event_id`, active `episode_id`, and
+source canonical `hypothesis_id`. `LOW` and `MEDIUM` are conservative policy
+classifications, not calibrated probabilities. `HIGH` remains intentionally
+unavailable, and numeric final confidence remains unimplemented.
+
+`AgentCycleResult.confidence` is a temporary explanation-confidence
+compatibility projection sourced directly from
+`HypothesisPackage.explanation_confidence_score`. It is not final confidence
+and must not be reused as `ConfidenceAssessment.numeric_confidence_score`.
+`AgentCycleResult.confidence_assessment` is canonical final analytical-chain
+reliability.
+
+The controlled Runtime supplies the existing
+`MarketSnapshot.data_quality_status` conclusion using the Confidence engine's
+established `market_snapshot_data_quality:<status>` context. This introduces no
+new data-quality rule. Canonical Confidence is committed only after successful
+cycle completion; failed and ineligible cycles preserve prior continuity.
+Retirement of the numeric compatibility field and operational Decision/Alert
+integration remain later authorized slices.
 
 Confidence can:
 

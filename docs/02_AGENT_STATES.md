@@ -1,5 +1,28 @@
 # Agent States
 
+## Independent State Dimensions
+
+Canonical `AgentState` carries two independent current-process conclusions:
+
+1. `current_state` describes process health or stage.
+2. `process_direction` describes observed process orientation.
+
+`ProcessDirection` has exactly four values:
+
+- `UP` — valid structured Price comparison ends above its starting close;
+- `DOWN` — valid structured Price comparison ends below its starting close;
+- `NEUTRAL` — valid structured Price comparison is flat over the comparison;
+- `UNKNOWN` — orientation cannot be established from valid available evidence.
+
+Process Classification is the single mechanical source of orientation. Agent
+State transports that conclusion without recalculating candles or parsing
+Hypothesis text. Process health and direction remain orthogonal: a state name
+does not imply a direction.
+
+`ProcessDirection` is not a trading Decision. `UP` does not mean
+`LOOK_FOR_LONG`, and `DOWN` does not mean `LOOK_FOR_SHORT`. Directional Decision
+policy remains a later bounded slice after trader-approved rules exist.
+
 ## Core Principle
 
 PumpAgent never predicts with certainty.

@@ -11,9 +11,19 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain.enums import AgentStateType
-from pumpagent.runtime.modules.agent_state import build_agent_state_from_market_hypothesis
-from pumpagent.runtime.modules.hypothesis import build_hypothesis
+from pumpagent.runtime.domain import (
+    AgentState,
+    HypothesisLifecycleStatus,
+    HypothesisPackage,
+    HypothesisSemanticCode,
+)
+from pumpagent.runtime.domain.enums import (
+    AgentStateType,
+    ConfidenceLevel,
+    ProcessDirection,
+    StateTransitionStatus,
+    UncertaintyLevel,
+)
 from pumpagent.runtime.modules.watchlist import (
     WATCHLIST_ACTION_NONE,
     WATCHLIST_ACTION_REGISTERED,
@@ -26,15 +36,39 @@ NOW = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
 LATER = NOW + timedelta(minutes=1)
 
 
-def make_hypothesis(**overrides: float):
-    data = {
-        "price_change_1m": 1.1,
-        "price_change_3m": 1.5,
-        "volume_spike_ratio": 8.1,
-        "oi_change_1m": 0.1,
-    }
-    data.update(overrides)
-    return build_hypothesis(data)
+def make_hypothesis() -> HypothesisPackage:
+    return HypothesisPackage(
+        event_id="event-1",
+        episode_id="episode-1",
+        hypothesis_id="hypothesis-1",
+        hypothesis_label="Ignition attempt",
+        hypothesis_summary="Canonical Watchlist test hypothesis.",
+        supporting_evidence=(),
+        contradicting_evidence=(),
+        explanation_confidence_score=50,
+        current_hypothesis_confidence_context=ConfidenceLevel.MEDIUM,
+        reasoning_notes="Watchlist projection test.",
+        uncertainty=UncertaintyLevel.MEDIUM,
+        semantic_code=HypothesisSemanticCode.UNRESOLVED,
+        lifecycle_status=HypothesisLifecycleStatus.CREATED,
+        previous_hypothesis_id=None,
+        previous_runtime_event_id=None,
+        hypothesis_change_reason="Initial test hypothesis.",
+    )
+
+
+def make_agent_state(current: AgentStateType) -> AgentState:
+    return AgentState(
+        event_id="event-1",
+        current_state=current,
+        process_direction=ProcessDirection.UNKNOWN,
+        previous_state=AgentStateType.UNKNOWN,
+        state_transition_status=StateTransitionStatus.UNCHANGED,
+        transition_reason="Watchlist projection test.",
+        supporting_evidence=(),
+        blocking_evidence=(),
+        state_confidence_context=ConfidenceLevel.MEDIUM,
+    )
 
 
 class WatchlistManagerTests(unittest.TestCase):
@@ -91,18 +125,8 @@ class WatchlistManagerTests(unittest.TestCase):
 
     def test_unknown_states_are_ignored(self) -> None:
         manager = WatchlistManager()
-        hypothesis = build_hypothesis(
-            {
-                "price_change_1m": 0.0,
-                "price_change_3m": 0.0,
-                "volume_spike_ratio": 1.0,
-                "oi_change_1m": 0.0,
-            }
-        )
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            event_id="event-1",
-        )
+        hypothesis = make_hypothesis()
+        agent_state = make_agent_state(AgentStateType.UNKNOWN)
 
         action, count = manager.track_cycle(
             symbol="BTCUSDT",
@@ -170,10 +194,7 @@ class WatchlistManagerTests(unittest.TestCase):
     def test_track_cycle_registers_then_updates(self) -> None:
         manager = WatchlistManager()
         hypothesis = make_hypothesis()
-        agent_state = build_agent_state_from_market_hypothesis(
-            hypothesis,
-            event_id="event-1",
-        )
+        agent_state = make_agent_state(AgentStateType.IGNITION)
 
         action, count = manager.track_cycle(
             symbol="BTCUSDT",

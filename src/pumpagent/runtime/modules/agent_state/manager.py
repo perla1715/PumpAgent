@@ -10,17 +10,10 @@ from pumpagent.runtime.domain import AgentState, HypothesisPackage, RuntimeEvent
 from pumpagent.runtime.domain.enums import (
     AgentStateType,
     ConfidenceLevel,
+    ProcessDirection,
     StateTransitionStatus,
     UncertaintyLevel,
 )
-from pumpagent.runtime.modules.hypothesis import MarketHypothesis
-
-
-MARKET_STATE_TO_AGENT_STATE = {
-    "UNKNOWN": AgentStateType.UNKNOWN,
-    "IGNITION": AgentStateType.IGNITION,
-    "CONTINUATION_ALIVE": AgentStateType.CONTINUATION_ALIVE,
-}
 
 
 class AgentStateError(ValueError):
@@ -30,6 +23,7 @@ class AgentStateError(ValueError):
 def build_agent_state(
     hypothesis: HypothesisPackage,
     *,
+    process_direction: ProcessDirection,
     runtime_event_id: str | None = None,
     previous_state: AgentStateType = AgentStateType.UNKNOWN,
 ) -> AgentState:
@@ -44,6 +38,7 @@ def build_agent_state(
     return AgentState(
         event_id=event_id,
         current_state=current_state,
+        process_direction=process_direction,
         previous_state=previous_state,
         state_transition_status=transition_status,
         transition_reason=_transition_reason(hypothesis, current_state),
@@ -60,40 +55,51 @@ def build_agent_state(
     )
 
 
-def build_agent_state_from_market_hypothesis(
-    hypothesis: MarketHypothesis,
+def build_agent_state_from_hypothesis_package(
+    hypothesis: HypothesisPackage,
     *,
-    event_id: str | None = None,
-    previous_state: AgentStateType = AgentStateType.UNKNOWN,
+    event_id: str,
+    previous_state: AgentStateType,
+    canonical_process_state: str,
+    canonical_process_direction: ProcessDirection,
+    supporting_evidence: tuple[str, ...],
+    contradicting_evidence: tuple[str, ...],
 ) -> AgentState:
-    """Build canonical AgentState from a lightweight MarketHypothesis."""
+    """Preserve operational Agent State behavior from canonical inputs."""
 
-    agent_state_event_id = event_id or hypothesis.id
-    current_state = _agent_state_type_from_market_hypothesis(
-        hypothesis,
-        previous_state=previous_state,
-    )
+    if hypothesis.event_id != event_id:
+        raise AgentStateError("Hypothesis Runtime event identity does not align.")
+    if not isinstance(canonical_process_direction, ProcessDirection):
+        raise AgentStateError(
+            "canonical_process_direction must be a ProcessDirection."
+        )
+    current_state = _agent_state_type_from_process_state(canonical_process_state)
     transition_status = _transition_status(previous_state, current_state)
-
     return AgentState(
-        event_id=agent_state_event_id,
+        event_id=event_id,
         current_state=current_state,
+        process_direction=canonical_process_direction,
         previous_state=previous_state,
         state_transition_status=transition_status,
-        transition_reason=_market_hypothesis_transition_reason(
-            hypothesis,
-            current_state,
+        transition_reason=(
+            "Market hypothesis state is unknown or conservatively unmapped: "
+            f"{canonical_process_state}."
+            if current_state is AgentStateType.UNKNOWN
+            else (
+                "Canonical state mapped from market hypothesis state "
+                f"{canonical_process_state}."
+            )
         ),
-        supporting_evidence=hypothesis.supporting_evidence,
-        blocking_evidence=hypothesis.contradicting_evidence,
+        supporting_evidence=supporting_evidence,
+        blocking_evidence=contradicting_evidence,
         state_confidence_context=_confidence_level_from_score(
-            hypothesis.confidence_score,
+            hypothesis.explanation_confidence_score
         ),
         allowed_next_states=(),
         rejected_state_transitions=_rejected_transitions(),
         notes=(
-            "Agent State bridge maps lightweight market hypotheses into the "
-            "canonical AgentState domain object."
+            "Agent State bridge maps canonical Hypothesis and Process inputs "
+            "without changing operational state rules."
         ),
     )
 
@@ -101,6 +107,7 @@ def build_agent_state_from_market_hypothesis(
 def add_agent_state(
     event: RuntimeEvent,
     *,
+    process_direction: ProcessDirection,
     previous_state: AgentStateType = AgentStateType.UNKNOWN,
 ) -> RuntimeEvent:
     """Return a new event with only agent_state added."""
@@ -110,6 +117,7 @@ def add_agent_state(
 
     agent_state = build_agent_state(
         event.hypothesis_package,
+        process_direction=process_direction,
         runtime_event_id=event.event_id,
         previous_state=previous_state,
     )
@@ -150,45 +158,10 @@ def _current_state_from_hypothesis(hypothesis: HypothesisPackage) -> AgentStateT
     return AgentStateType.UNKNOWN
 
 
-def _agent_state_type_from_market_state(market_state: str) -> AgentStateType:
-    return MARKET_STATE_TO_AGENT_STATE.get(str(market_state), AgentStateType.UNKNOWN)
-
-
-def _agent_state_type_from_market_hypothesis(
-    hypothesis: MarketHypothesis,
-    *,
-    previous_state: AgentStateType,
-) -> AgentStateType:
-    market_state = str(hypothesis.market_state)
-
-    if market_state == "WEAKENING":
-        return _weakening_state_from_previous_state(previous_state)
-
-    if market_state == "CONTINUATION_ALIVE":
-        confidence = _confidence_level_from_score(hypothesis.confidence_score)
-        if confidence in (
-            ConfidenceLevel.MEDIUM,
-            ConfidenceLevel.HIGH,
-            ConfidenceLevel.VERY_HIGH,
-        ):
-            return AgentStateType.CONTINUATION_ALIVE
-        return AgentStateType.UNKNOWN
-
-    return _agent_state_type_from_market_state(market_state)
-
-
-def _weakening_state_from_previous_state(
-    previous_state: AgentStateType,
-) -> AgentStateType:
-    if previous_state == AgentStateType.CONTINUATION_ALIVE:
-        return AgentStateType.CONTINUATION_SATURATION
-
-    if previous_state in (
-        AgentStateType.CONTINUATION_SATURATION,
-        AgentStateType.FIRST_FAILURE_CANDIDATE,
-    ):
-        return AgentStateType.FIRST_FAILURE_CANDIDATE
-
+def _agent_state_type_from_process_state(process_state: str) -> AgentStateType:
+    """Conservative MVP bridge; WEAKENING has no non-deferred Agent State."""
+    if process_state == "CONTINUATION_ALIVE":
+        return AgentStateType.CONTINUATION_ALIVE
     return AgentStateType.UNKNOWN
 
 
@@ -199,19 +172,6 @@ def _transition_status(
     if previous_state == current_state:
         return StateTransitionStatus.UNCHANGED
     return StateTransitionStatus.CHANGED
-
-
-def _market_hypothesis_transition_reason(
-    hypothesis: MarketHypothesis,
-    current_state: AgentStateType,
-) -> str:
-    if current_state == AgentStateType.UNKNOWN:
-        return (
-            "Market hypothesis state is unknown or conservatively unmapped: "
-            f"{hypothesis.market_state}."
-        )
-
-    return f"Canonical state mapped from market hypothesis state {hypothesis.market_state}."
 
 
 def _confidence_level_from_score(score: int) -> ConfidenceLevel:

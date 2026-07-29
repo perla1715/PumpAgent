@@ -16,17 +16,14 @@ FIXTURE_ORCHESTRATOR = (
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pumpagent.runtime.domain import RuntimeEvent
-from pumpagent.runtime.domain.enums import AlertCategory
+from pumpagent.runtime.domain import HypothesisLifecycleStatus, RuntimeEvent
+from pumpagent.runtime.domain.enums import AlertCategory, ProcessDirection
 from pumpagent.runtime.modules.agent_state import add_agent_state
-from pumpagent.runtime.modules.confidence import add_confidence_assessment
-from pumpagent.runtime.modules.decision_alert import add_decision_alert
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.structure import add_structural_evidence
-from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 
 
 RUNTIME_SECTIONS = (
@@ -112,15 +109,28 @@ class RuntimePipelineContractTests(unittest.TestCase):
                 ("market_efficiency_evidence",),
                 add_market_efficiency_evidence,
             ),
-            ("Hypothesis", ("hypothesis_package",), add_hypothesis_package),
-            ("Agent State", ("agent_state",), add_agent_state),
             (
-                "Scenario Probability",
-                ("scenario_probability",),
-                add_scenario_probability,
+                "Hypothesis",
+                ("hypothesis_package",),
+                lambda current: add_hypothesis_package(
+                    current,
+                    episode_id="episode-test-1",
+                    hypothesis_id="hypothesis-test-1",
+                    explanation_confidence_score=50,
+                    lifecycle_status=HypothesisLifecycleStatus.CREATED,
+                    hypothesis_change_reason=(
+                        "Initial hypothesis for the pipeline contract test."
+                    ),
+                ),
             ),
-            ("Confidence", ("confidence_assessment",), add_confidence_assessment),
-            ("Decision / Alert", ("decision_alert",), add_decision_alert),
+            (
+                "Agent State",
+                ("agent_state",),
+                lambda current: add_agent_state(
+                    current,
+                    process_direction=ProcessDirection.UNKNOWN,
+                ),
+            ),
         )
 
         for stage_name, added_sections, stage_function in stages:
@@ -148,15 +158,9 @@ class RuntimePipelineContractTests(unittest.TestCase):
                         f"{stage_name} populated future section {section}",
                     )
 
-        self.assertIn(
-            event.decision_alert.alert_category,
-            (
-                AlertCategory.NO_ACTION,
-                AlertCategory.WATCH,
-                AlertCategory.WARNING,
-                AlertCategory.HIGH_ATTENTION,
-            ),
-        )
+        self.assertIsNone(event.scenario_probability)
+        self.assertIsNone(event.confidence_assessment)
+        self.assertIsNone(event.decision_alert)
         self.assertIsNone(event.learning_metadata)
 
 

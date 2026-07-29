@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
@@ -18,14 +19,26 @@ if str(SRC) not in sys.path:
 from pumpagent.runtime.domain import (
     AgentState,
     ConfidenceAssessment,
+    HypothesisEvidenceReference,
+    HypothesisLifecycleStatus,
     HypothesisPackage,
+    HypothesisSemanticCode,
     RuntimeEvent,
+    ScenarioArtifactType,
+    ScenarioAssessmentStatus,
+    ScenarioIdentifier,
     ScenarioProbability,
+    ScenarioProvenanceReference,
+    ScenarioReasonCode,
+    ScenarioWeight,
+    canonical_process_evidence_id,
+    canonical_scenario_probability_id,
 )
 from pumpagent.runtime.domain.enums import (
     AgentStateType,
     ConfidenceLevel,
     DataQualityStatus,
+    ProcessDirection,
     StateTransitionStatus,
     UncertaintyLevel,
 )
@@ -40,8 +53,16 @@ from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
-from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
+
+
+CANONICAL_HYPOTHESIS_INPUT = {
+    "episode_id": "episode-test-1",
+    "hypothesis_id": "hypothesis-test-1",
+    "explanation_confidence_score": 50,
+    "lifecycle_status": HypothesisLifecycleStatus.CREATED,
+    "hypothesis_change_reason": "Initial hypothesis for the test episode.",
+}
 
 
 def make_event_with_scenario_probability() -> RuntimeEvent:
@@ -57,9 +78,15 @@ def make_event_with_scenario_probability() -> RuntimeEvent:
     event = add_observation_package(event)
     event = add_structural_evidence(event)
     event = add_market_efficiency_evidence(event)
-    event = add_hypothesis_package(event)
-    event = add_agent_state(event)
-    return add_scenario_probability(event)
+    event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
+    event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
+    return event.with_sections(
+        scenario_probability=make_scenario_probability(
+            event_id=event.event_id,
+            source_hypothesis_id=event.hypothesis_package.hypothesis_id,
+            uncertainty=UncertaintyLevel.HIGH,
+        )
+    )
 
 
 def make_hypothesis_package(
@@ -74,12 +101,40 @@ def make_hypothesis_package(
         event_id=event_id,
         hypothesis_label="current_condition_explanation",
         hypothesis_summary="Mock current-condition explanation.",
-        supporting_evidence=supporting_evidence,
-        contradicting_evidence=contradicting_evidence,
-        competing_hypotheses=(),
+        episode_id="episode-test-1",
+        hypothesis_id="hypothesis-test-1",
+        supporting_evidence=tuple(
+            HypothesisEvidenceReference(
+                event_id,
+                "structural_evidence",
+                f"support-{index}",
+                description,
+            )
+            for index, description in enumerate(supporting_evidence)
+        ),
+        contradicting_evidence=tuple(
+            HypothesisEvidenceReference(
+                event_id,
+                "market_efficiency_evidence",
+                f"contradiction-{index}",
+                description,
+            )
+            for index, description in enumerate(contradicting_evidence)
+        ),
+        explanation_confidence_score={
+            ConfidenceLevel.UNKNOWN: 0,
+            ConfidenceLevel.LOW: 25,
+            ConfidenceLevel.MEDIUM: 50,
+            ConfidenceLevel.HIGH: 80,
+        }[confidence_context],
         current_hypothesis_confidence_context=confidence_context,
         reasoning_notes="Mock hypothesis for confidence tests.",
         uncertainty=uncertainty,
+        semantic_code=HypothesisSemanticCode.UNRESOLVED,
+        lifecycle_status=HypothesisLifecycleStatus.CREATED,
+        previous_hypothesis_id=None,
+        previous_runtime_event_id=None,
+        hypothesis_change_reason="Initial hypothesis for the test episode.",
     )
 
 
@@ -91,6 +146,7 @@ def make_agent_state(
     return AgentState(
         event_id=event_id,
         current_state=current_state,
+        process_direction=ProcessDirection.UNKNOWN,
         previous_state=AgentStateType.UNKNOWN,
         state_transition_status=StateTransitionStatus.CHANGED
         if current_state != AgentStateType.UNKNOWN
@@ -105,22 +161,92 @@ def make_agent_state(
 def make_scenario_probability(
     *,
     event_id: str = "runtime-evt-1",
+    episode_id: str = "episode-test-1",
+    source_hypothesis_id: str = "hypothesis-test-1",
     uncertainty: UncertaintyLevel = UncertaintyLevel.MEDIUM,
     contradicting_evidence: tuple[str, ...] = (),
 ) -> ScenarioProbability:
+    timestamp = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    process_id = canonical_process_evidence_id(episode_id, event_id)
+    process_quality_id = (
+        f"process-quality-assessment:{episode_id}:{event_id}"
+    )
+    process_reference = ScenarioProvenanceReference(
+        artifact_type=ScenarioArtifactType.PROCESS_EVIDENCE,
+        artifact_id=process_id,
+        episode_id=episode_id,
+        runtime_event_id=event_id,
+        observation_timestamp=timestamp,
+    )
+    process_quality_reference = ScenarioProvenanceReference(
+        artifact_type=ScenarioArtifactType.PROCESS_QUALITY,
+        artifact_id=process_quality_id,
+        episode_id=episode_id,
+        runtime_event_id=event_id,
+        observation_timestamp=timestamp,
+    )
+    hypothesis_reference = ScenarioProvenanceReference(
+        artifact_type=ScenarioArtifactType.HYPOTHESIS,
+        artifact_id=source_hypothesis_id,
+        episode_id=episode_id,
+        runtime_event_id=event_id,
+        observation_timestamp=timestamp,
+    )
     return ScenarioProbability(
-        event_id=event_id,
-        scenario_set=("continuation_persists", "first_failure_candidate_emerges"),
-        scenario_probabilities={
-            "continuation_persists": 0.55,
-            "first_failure_candidate_emerges": 0.45,
-        },
-        primary_scenario="continuation_persists",
-        alternative_scenarios=("first_failure_candidate_emerges",),
-        supporting_evidence=("scenario:mock",),
-        contradicting_evidence=contradicting_evidence,
+        scenario_probability_id=canonical_scenario_probability_id(
+            episode_id,
+            event_id,
+            source_hypothesis_id,
+        ),
+        episode_id=episode_id,
+        runtime_event_id=event_id,
+        observation_timestamp=timestamp,
+        created_at=timestamp,
+        source_process_evidence_id=process_id,
+        source_process_quality_assessment_id=process_quality_id,
+        source_hypothesis_id=source_hypothesis_id,
+        source_healthy_baseline_id=None,
+        previous_scenario_probability_id=None,
+        hypothesis_semantic_code=HypothesisSemanticCode.UNRESOLVED,
+        status=ScenarioAssessmentStatus.COMPLETED,
+        distribution=(
+            ScenarioWeight(
+                ScenarioIdentifier.CONTINUE_OBSERVATION,
+                Decimal("0.100000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.CONTINUATION_PERSISTS,
+                Decimal("0.650000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.SATURATION_PERSISTS,
+                Decimal("0.150000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.FAILURE_CANDIDATE_PERSISTS,
+                Decimal("0.070000"),
+            ),
+            ScenarioWeight(
+                ScenarioIdentifier.FIRST_FAILURE_CONFIRMS,
+                Decimal("0.030000"),
+            )
+        ),
+        primary_scenario=ScenarioIdentifier.CONTINUATION_PERSISTS,
         uncertainty=uncertainty,
-        monitoring_focus=("continuation_quality",),
+        reason_codes=(ScenarioReasonCode.PRIMARY_SCENARIO_QUALIFIED,),
+        supporting_provenance=(
+            (
+                process_reference,
+                process_quality_reference,
+                hypothesis_reference,
+            )
+            if not contradicting_evidence
+            else (process_reference, process_quality_reference)
+        ),
+        contradicting_provenance=(
+            (hypothesis_reference,) if contradicting_evidence else ()
+        ),
+        missing_prerequisites=(),
     )
 
 
@@ -192,6 +318,97 @@ class ConfidenceEngineTests(unittest.TestCase):
         self.assertEqual(assessment.event_id, event.hypothesis_package.event_id)
         self.assertIn("hypothesis_has_supporting_evidence", assessment.confidence_drivers)
         self.assertIn("agent_state_unknown", assessment.confidence_reducers)
+        self.assertEqual(assessment.event_id, "runtime-evt-1")
+        self.assertEqual(assessment.episode_id, "episode-test-1")
+        self.assertEqual(
+            assessment.source_hypothesis_id,
+            "hypothesis-test-1",
+        )
+
+    def test_confidence_identities_survive_serialization(self) -> None:
+        assessment = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+        )
+
+        serialized = assessment.to_dict()
+
+        self.assertEqual(serialized["event_id"], "runtime-evt-1")
+        self.assertEqual(serialized["episode_id"], "episode-test-1")
+        self.assertEqual(serialized["source_hypothesis_id"], "hypothesis-test-1")
+
+    def test_confidence_rejects_event_identity_mismatches(self) -> None:
+        cases = (
+            (
+                make_hypothesis_package(),
+                make_agent_state(
+                    AgentStateType.CONTINUATION_ALIVE,
+                    event_id="other-event",
+                ),
+                make_scenario_probability(),
+                None,
+            ),
+            (
+                make_hypothesis_package(),
+                make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+                make_scenario_probability(event_id="other-event"),
+                None,
+            ),
+            (
+                make_hypothesis_package(),
+                make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+                make_scenario_probability(),
+                "other-event",
+            ),
+        )
+
+        for hypothesis, agent_state, scenario, runtime_event_id in cases:
+            with self.subTest(runtime_event_id=runtime_event_id), self.assertRaisesRegex(
+                ConfidenceError,
+                "event_id",
+            ):
+                build_confidence_assessment(
+                    hypothesis,
+                    agent_state,
+                    scenario,
+                    runtime_event_id=runtime_event_id,
+                )
+
+    def test_confidence_rejects_active_episode_mismatch(self) -> None:
+        with self.assertRaisesRegex(ConfidenceError, "episode ID"):
+            build_confidence_assessment(
+                make_hypothesis_package(),
+                make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+                make_scenario_probability(),
+                active_episode_id="other-episode",
+            )
+
+    def test_confidence_rejects_scenario_episode_mismatch(self) -> None:
+        hypothesis = make_hypothesis_package()
+        scenario = make_scenario_probability(
+            episode_id="other-episode",
+        )
+
+        with self.assertRaisesRegex(ConfidenceError, "episode_id"):
+            build_confidence_assessment(
+                hypothesis,
+                make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+                scenario,
+            )
+
+    def test_confidence_rejects_scenario_hypothesis_mismatch(self) -> None:
+        hypothesis = make_hypothesis_package()
+        scenario = make_scenario_probability(
+            source_hypothesis_id="other-hypothesis",
+        )
+
+        with self.assertRaisesRegex(ConfidenceError, "source_hypothesis_id"):
+            build_confidence_assessment(
+                hypothesis,
+                make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+                scenario,
+            )
 
     def test_confidence_produces_valid_assessment(self) -> None:
         event = make_event_with_scenario_probability()
@@ -280,7 +497,7 @@ class ConfidenceEngineTests(unittest.TestCase):
         event = add_observation_package(event)
         event = add_structural_evidence(event)
         event = add_market_efficiency_evidence(event)
-        event = add_hypothesis_package(event)
+        event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
 
         with self.assertRaisesRegex(ConfidenceError, "agent_state"):
             add_confidence_assessment(event)
@@ -298,8 +515,8 @@ class ConfidenceEngineTests(unittest.TestCase):
         event = add_observation_package(event)
         event = add_structural_evidence(event)
         event = add_market_efficiency_evidence(event)
-        event = add_hypothesis_package(event)
-        event = add_agent_state(event)
+        event = add_hypothesis_package(event, **CANONICAL_HYPOTHESIS_INPUT)
+        event = add_agent_state(event, process_direction=ProcessDirection.UNKNOWN)
 
         updated = add_confidence_assessment(event)
 
@@ -445,7 +662,7 @@ class ConfidenceEngineTests(unittest.TestCase):
         assessment = build_confidence_assessment(
             make_hypothesis_package(
                 uncertainty=UncertaintyLevel.LOW,
-                confidence_context=ConfidenceLevel.VERY_HIGH,
+                confidence_context=ConfidenceLevel.HIGH,
             ),
             make_agent_state(AgentStateType.CONTINUATION_ALIVE),
             make_scenario_probability(uncertainty=UncertaintyLevel.LOW),
@@ -485,8 +702,142 @@ class ConfidenceEngineTests(unittest.TestCase):
         self.assertIsNone(assessment.numeric_confidence_score)
         self.assertEqual(calculate_confidence({"price_change_1m": 100.0}), 30)
 
+    def test_scenario_weights_are_not_used_as_final_confidence(self) -> None:
+        hypothesis = make_hypothesis_package()
+        agent_state = make_agent_state(AgentStateType.CONTINUATION_ALIVE)
+        scenario = make_scenario_probability()
+        reweighted = replace(
+            scenario,
+            distribution=(
+                ScenarioWeight(
+                    ScenarioIdentifier.CONTINUE_OBSERVATION,
+                    Decimal("0.150000"),
+                ),
+                ScenarioWeight(
+                    ScenarioIdentifier.CONTINUATION_PERSISTS,
+                    Decimal("0.150000"),
+                ),
+                ScenarioWeight(
+                    ScenarioIdentifier.SATURATION_PERSISTS,
+                    Decimal("0.550000"),
+                ),
+                ScenarioWeight(
+                    ScenarioIdentifier.FAILURE_CANDIDATE_PERSISTS,
+                    Decimal("0.120000"),
+                ),
+                ScenarioWeight(
+                    ScenarioIdentifier.FIRST_FAILURE_CONFIRMS,
+                    Decimal("0.030000"),
+                ),
+            ),
+            primary_scenario=ScenarioIdentifier.SATURATION_PERSISTS,
+        )
+
+        original = build_confidence_assessment(
+            hypothesis,
+            agent_state,
+            scenario,
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+        changed_weights = build_confidence_assessment(
+            hypothesis,
+            agent_state,
+            reweighted,
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+        self.assertEqual(
+            changed_weights.final_confidence_level,
+            original.final_confidence_level,
+        )
+        self.assertEqual(changed_weights.confidence_drivers, original.confidence_drivers)
+        self.assertEqual(changed_weights.confidence_reducers, original.confidence_reducers)
+
+
+class ConfidenceAssessmentInvariantTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.valid = build_confidence_assessment(
+            make_hypothesis_package(),
+            make_agent_state(AgentStateType.CONTINUATION_ALIVE),
+            make_scenario_probability(),
+            data_quality_impact="market_snapshot_data_quality:valid",
+        )
+
+    def test_empty_identities_are_rejected(self) -> None:
+        for field_name in ("event_id", "episode_id", "source_hypothesis_id"):
+            with self.subTest(field_name=field_name), self.assertRaisesRegex(
+                ValueError,
+                field_name,
+            ):
+                replace(self.valid, **{field_name: " "})
+
+    def test_invalid_confidence_level_and_uncertainty_are_rejected(self) -> None:
+        cases = (
+            ("final_confidence_level", "medium", "ConfidenceLevel"),
+            ("uncertainty_level", "medium", "UncertaintyLevel"),
+        )
+        for field_name, value, message in cases:
+            with self.subTest(field_name=field_name), self.assertRaisesRegex(
+                ValueError,
+                message,
+            ):
+                replace(self.valid, **{field_name: value})
+
+    def test_required_text_is_rejected_when_empty(self) -> None:
+        for field_name in (
+            "confidence_summary",
+            "data_quality_impact",
+            "contradiction_impact",
+        ):
+            with self.subTest(field_name=field_name), self.assertRaisesRegex(
+                ValueError,
+                field_name,
+            ):
+                replace(self.valid, **{field_name: ""})
+
+    def test_invalid_driver_and_reducer_entries_are_rejected(self) -> None:
+        cases = (
+            ("confidence_drivers", ("",)),
+            ("confidence_drivers", ("duplicate", "duplicate")),
+            ("confidence_reducers", ("",)),
+            ("confidence_reducers", ("duplicate", "duplicate")),
+        )
+        for field_name, values in cases:
+            with self.subTest(field_name=field_name, values=values), self.assertRaises(
+                ValueError
+            ):
+                replace(self.valid, **{field_name: values})
+
+    def test_invalid_optional_numeric_score_is_rejected(self) -> None:
+        for value in (True, "50", float("nan"), float("inf"), -0.1, 100.1):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "numeric_confidence_score",
+            ):
+                replace(self.valid, numeric_confidence_score=value)
+
+    def test_valid_optional_numeric_score_uses_existing_range(self) -> None:
+        for value in (0, 50.5, 100):
+            with self.subTest(value=value):
+                assessment = replace(self.valid, numeric_confidence_score=value)
+                self.assertEqual(assessment.numeric_confidence_score, value)
+
+    def test_invalid_optional_text_is_rejected(self) -> None:
+        for field_name in (
+            "confidence_change_from_previous_event",
+            "reliability_notes",
+            "calibration_notes",
+            "confidence_history_reference",
+        ):
+            with self.subTest(field_name=field_name), self.assertRaisesRegex(
+                ValueError,
+                field_name,
+            ):
+                replace(self.valid, **{field_name: " "})
+
     def test_confidence_imports_required_final_reliability_inputs_only(self) -> None:
         tree = ast.parse(CONFIDENCE_ENGINE.read_text(encoding="utf-8"))
+        source = CONFIDENCE_ENGINE.read_text(encoding="utf-8")
         imports = _imports_from(tree)
         imported_names = _imported_names_from(tree)
 
@@ -510,6 +861,17 @@ class ConfidenceEngineTests(unittest.TestCase):
         self.assertTrue(
             {"DecisionAlert", "DecisionType", "AlertLevel"}.isdisjoint(imported_names)
         )
+        for legacy_access in (
+            "scenario_probability.event_id",
+            "scenario_probability.scenario_probabilities",
+            "scenario_probability.scenario_set",
+            "scenario_probability.alternative_scenarios",
+            "scenario_probability.contradicting_evidence",
+            "scenario_probability.monitoring_focus",
+            "scenario_probability.metadata",
+        ):
+            with self.subTest(legacy_access=legacy_access):
+                self.assertNotIn(legacy_access, source)
 
 
 def _imports_from(tree: ast.AST) -> tuple[str, ...]:

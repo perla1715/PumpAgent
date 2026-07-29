@@ -19,6 +19,31 @@ class RuntimeStatus(str, Enum):
     FAILED = "failed"
 
 
+class ObservationEpisodeStatus(str, Enum):
+    """Lifecycle status of an Observation Episode."""
+
+    ACTIVE = "active"
+    CLOSED = "closed"
+
+
+class ObservationLifecycleDecision(str, Enum):
+    """Lifecycle-only decisions owned by Observation Policy."""
+
+    OPEN = "open"
+    CONTINUE = "continue"
+    CLOSE = "close"
+    REPLACE = "replace"
+    NO_ACTION = "no_action"
+
+
+class ObservationTriggerRelation(str, Enum):
+    """Ordering of an incoming trigger relative to the active Episode."""
+
+    NEWER = "newer"
+    DUPLICATE = "duplicate"
+    OLDER = "older"
+
+
 class EvidenceStrength(str, Enum):
     UNKNOWN = "unknown"
     WEAK = "weak"
@@ -41,6 +66,15 @@ class AgentStateType(str, Enum):
     FIRST_FAILURE_CANDIDATE = "first_failure_candidate"
     FIRST_FAILURE = "first_failure"
     CONTINUATION_DEATH = "continuation_death"
+
+
+class ProcessDirection(str, Enum):
+    """Observed market-process orientation, never a trading disposition."""
+
+    UP = "up"
+    DOWN = "down"
+    NEUTRAL = "neutral"
+    UNKNOWN = "unknown"
 
 
 class StateTransitionStatus(str, Enum):
