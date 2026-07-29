@@ -12,6 +12,7 @@ from typing import Any
 from pumpagent.learning.domain import LEARNING_CASE_SCHEMA_VERSION
 from pumpagent.learning.labels import LABEL_POLICY_VERSION, label_outcome
 from pumpagent.learning.repository import SQLiteLearningCaseRepository
+from pumpagent.learning.readiness import READINESS_POLICIES, policy_allows
 from pumpagent.runtime.domain.base import to_primitive
 
 
@@ -23,8 +24,21 @@ def export_jsonl_dataset(
     output_path: str | Path,
     *,
     runtime_version: str,
+    readiness_policy: str = "evaluation",
 ) -> dict[str, Any]:
-    cases = repository.list_dataset_eligible()
+    if readiness_policy not in READINESS_POLICIES:
+        raise ValueError(f"Unknown readiness policy: {readiness_policy}")
+    all_cases = repository.list_cases()
+    assessments = {
+        case.case_id: repository.latest_readiness_assessment(case.case_id)
+        for case in all_cases
+    }
+    cases = tuple(
+        case
+        for case in all_cases
+        if assessments[case.case_id] is not None
+        and policy_allows(assessments[case.case_id], readiness_policy)  # type: ignore[arg-type]
+    )
     rows: list[dict[str, Any]] = []
     horizons: set[int] = set()
     outcome_versions: set[str] = set()
@@ -65,19 +79,35 @@ def export_jsonl_dataset(
                 "outcome_computation_versions": sorted(
                     {item.computation_version for item in outcomes}
                 ),
+                "readiness_assessment_id": assessments[
+                    case.case_id
+                ].assessment_id,
+                "readiness_policy": readiness_policy,
             }
         )
     rows.sort(key=lambda item: (item["cycle_timestamp"], item["case_id"]))
     canonical_rows = tuple(_canonical_json(row) for row in rows)
     content = "\n".join(canonical_rows) + ("\n" if canonical_rows else "")
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    all_cases = repository.list_cases()
-    exclusions = Counter(
-        reason
-        for case in all_cases
-        if case not in cases
-        for reason in case.exclusion_reasons or ("not_dataset_eligible",)
-    )
+    exclusions: Counter[str] = Counter()
+    for case in all_cases:
+        if case in cases:
+            continue
+        assessment = assessments[case.case_id]
+        if assessment is None:
+            exclusions["missing_readiness_assessment"] += 1
+        elif assessment.manually_excluded:
+            exclusions["manually_excluded"] += 1
+        elif assessment.administratively_blocked:
+            exclusions["administratively_blocked"] += 1
+        elif not assessment.technically_ready:
+            exclusions[
+                f"readiness_{assessment.readiness_status.value}"
+            ] += 1
+        elif readiness_policy == "training":
+            exclusions["training_review_not_approved"] += 1
+        else:
+            exclusions["readiness_policy_rejected"] += 1
     timestamps = [case.cycle_timestamp for case in cases]
     created_at = (
         max(case.ingestion_timestamp for case in cases)
@@ -104,6 +134,7 @@ def export_jsonl_dataset(
             "outcomes": sorted(outcome_schema_versions),
         },
         "label_policy": LABEL_POLICY_VERSION,
+        "readiness_policy": readiness_policy,
         "outcome_horizons": sorted(horizons),
         "outcome_computation_versions": sorted(outcome_versions),
         "included_case_ids": [row["case_id"] for row in rows],
@@ -113,7 +144,7 @@ def export_jsonl_dataset(
     target = Path(output_path)
     target.write_text(content, encoding="utf-8")
     target.with_suffix(target.suffix + ".manifest.json").write_text(
-        json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+        json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
     return manifest
@@ -125,6 +156,7 @@ def _canonical_json(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
         default=_json_default,
     )
 

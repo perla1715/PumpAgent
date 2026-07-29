@@ -12,6 +12,7 @@ from pumpagent.learning.domain import SUPPORTED_HORIZONS_MINUTES
 from pumpagent.learning.export import export_jsonl_dataset
 from pumpagent.learning.outcomes import OutcomeAttributionService
 from pumpagent.learning.replay import HistoricalReplayRunner, ReplayConfig
+from pumpagent.learning.readiness import LearningReadinessService
 from pumpagent.learning.repository import SQLiteLearningCaseRepository
 from pumpagent.runtime.domain import MarketSnapshot
 from pumpagent.runtime.domain.enums import DataQualityStatus
@@ -44,10 +45,15 @@ def main(argv: list[str] | None = None) -> int:
             service = OutcomeAttributionService(repository)
             count = 0
             for case in repository.list_cases():
+                applicable = tuple(
+                    item
+                    for item in observations
+                    if _observation_applies_to_case(item, case)
+                )
                 for horizon in SUPPORTED_HORIZONS_MINUTES:
                     service.attribute(
                         case,
-                        observations,
+                        applicable,
                         horizon_minutes=horizon,
                         creation_timestamp=case.cycle_timestamp
                         + timedelta(minutes=horizon),
@@ -60,10 +66,67 @@ def main(argv: list[str] | None = None) -> int:
             for case in repository.list_cases():
                 counts[case.case_status.value] = counts.get(case.case_status.value, 0) + 1
             print(json.dumps(counts, sort_keys=True))
+        elif args.command == "assess-readiness":
+            repository.initialize()
+            assessment = LearningReadinessService(repository).assess(
+                args.case_id, horizon_minutes=args.horizon
+            )
+            print(json.dumps(assessment.to_dict(), sort_keys=True))
+        elif args.command == "assess-all":
+            repository.initialize()
+            assessments = LearningReadinessService(repository).assess_all(
+                horizon_minutes=args.horizon
+            )
+            print(json.dumps({"assessments": len(assessments)}))
+        elif args.command == "readiness-counts":
+            repository.initialize()
+            counts: dict[str, int] = {}
+            for case in repository.list_cases():
+                assessment = repository.latest_readiness_assessment(case.case_id)
+                status = (
+                    assessment.readiness_status.value
+                    if assessment is not None
+                    else "unassessed"
+                )
+                counts[status] = counts.get(status, 0) + 1
+            print(json.dumps(counts, sort_keys=True))
+        elif args.command == "explain-readiness":
+            repository.initialize()
+            assessment = repository.latest_readiness_assessment(args.case_id)
+            if assessment is None:
+                raise ValueError("Case has no readiness assessment.")
+            print(
+                json.dumps(
+                    {
+                        "case_id": assessment.case_id,
+                        "status": assessment.readiness_status.value,
+                        "checks": [
+                            item.to_dict()
+                            for item in assessment.checks_performed
+                        ],
+                        "failure_reasons": assessment.failure_reasons,
+                        "warnings": assessment.warnings,
+                        "approved_for_evaluation": (
+                            assessment.approved_for_evaluation
+                        ),
+                        "approved_for_training": (
+                            assessment.approved_for_training
+                        ),
+                        "manually_excluded": assessment.manually_excluded,
+                        "administratively_blocked": (
+                            assessment.administratively_blocked
+                        ),
+                    },
+                    sort_keys=True,
+                )
+            )
         elif args.command == "export":
             repository.initialize()
             manifest = export_jsonl_dataset(
-                repository, args.output, runtime_version=args.runtime_version
+                repository,
+                args.output,
+                runtime_version=args.runtime_version,
+                readiness_policy=args.policy,
             )
             print(json.dumps(manifest, sort_keys=True))
         elif args.command == "validate":
@@ -93,9 +156,20 @@ def _parser() -> argparse.ArgumentParser:
     outcomes = commands.add_parser("complete-outcomes")
     outcomes.add_argument("--input", required=True)
     commands.add_parser("counts")
+    assess = commands.add_parser("assess-readiness")
+    assess.add_argument("--case-id", required=True)
+    assess.add_argument("--horizon", type=int, default=60)
+    assess_all = commands.add_parser("assess-all")
+    assess_all.add_argument("--horizon", type=int, default=60)
+    commands.add_parser("readiness-counts")
+    explain = commands.add_parser("explain-readiness")
+    explain.add_argument("--case-id", required=True)
     export = commands.add_parser("export")
     export.add_argument("--output", required=True)
     export.add_argument("--runtime-version", required=True)
+    export.add_argument(
+        "--policy", choices=("evaluation", "training"), default="evaluation"
+    )
     commands.add_parser("validate")
     return parser
 
@@ -136,6 +210,15 @@ def _time(value: object) -> datetime:
 
 def _optional_time(value: str | None) -> datetime | None:
     return None if value is None else _time(value)
+
+
+def _observation_applies_to_case(value, case) -> bool:  # type: ignore[no-untyped-def]
+    return (
+        value.get("symbol") == case.symbol
+        and value.get("exchange") == case.exchange
+        and value.get("timeframe") == case.timeframe
+        and _time(value.get("timestamp")) > case.cycle_timestamp
+    )
 
 
 if __name__ == "__main__":

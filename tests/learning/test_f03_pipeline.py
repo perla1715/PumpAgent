@@ -27,6 +27,7 @@ from pumpagent.learning.replay import (
     HistoricalReplayRunner,
     ReplayConfig,
 )
+from pumpagent.learning.readiness import LearningReadinessService
 from pumpagent.learning.repository import (
     LearningCaseConflictError,
     SQLiteLearningCaseRepository,
@@ -147,6 +148,32 @@ class LearningPersistenceTests(TestCase):
             )
         self.assertEqual(self.repository.list_outcomes(case.case_id), (record,))
 
+    def test_outcome_attachment_rejects_forged_cycle_and_market_identity(
+        self,
+    ) -> None:
+        case = self.service.persist(self.event, ingestion_timestamp=NOW)
+        record = compute_outcome_record(
+            case, future_observations(), horizon_minutes=5
+        )
+        with self.assertRaises(LearningCaseConflictError):
+            self.repository.attach_outcome(
+                replace(
+                    record,
+                    source_cycle_timestamp=NOW - timedelta(minutes=1),
+                )
+            )
+        with self.assertRaises(LearningCaseConflictError):
+            self.repository.attach_outcome(
+                replace(
+                    record,
+                    source_data_identity={
+                        "symbol": "ETHUSDT",
+                        "exchange": "binance",
+                        "timeframe": "1m",
+                    },
+                )
+            )
+
     def test_review_is_separate_idempotent_record(self) -> None:
         case = self.service.persist(self.event, ingestion_timestamp=NOW)
         review = ReviewRecord(
@@ -174,7 +201,12 @@ class OutcomeAttributionTests(TestCase):
         )
         self.repository.initialize()
         self.case = LearningCasePersistenceService(self.repository).persist(
-            completed_event(), ingestion_timestamp=NOW
+            completed_event(),
+            ingestion_timestamp=NOW,
+            provenance={
+                "source": "test_ingestion",
+                "runtime_version": "526e72f",
+            },
         )
 
     def tearDown(self) -> None:
@@ -305,7 +337,12 @@ class LabelsAndExportTests(TestCase):
         )
         self.repository.initialize()
         self.case = LearningCasePersistenceService(self.repository).persist(
-            completed_event(), ingestion_timestamp=NOW
+            completed_event(),
+            ingestion_timestamp=NOW,
+            provenance={
+                "source": "test_ingestion",
+                "runtime_version": "526e72f",
+            },
         )
 
     def tearDown(self) -> None:
@@ -385,6 +422,7 @@ class LabelsAndExportTests(TestCase):
                 horizon_minutes=horizon,
                 creation_timestamp=NOW + timedelta(minutes=horizon),
             )
+        LearningReadinessService(self.repository).assess(self.case.case_id)
         first = export_jsonl_dataset(
             self.repository, output, runtime_version="526e72f"
         )
@@ -440,3 +478,84 @@ class ReplayTests(TestCase):
             self.assertEqual(cli_main(["--store", store, "init"]), 0)
             self.assertEqual(cli_main(["--store", store, "counts"]), 0)
             self.assertEqual(cli_main(["--store", store, "validate"]), 0)
+
+    def test_replay_rejects_future_ohlcv_before_runtime_execution(self) -> None:
+        with TemporaryDirectory() as directory:
+            repository = SQLiteLearningCaseRepository(
+                Path(directory) / "learning.sqlite3"
+            )
+            repository.initialize()
+            snapshot = replace(
+                make_snapshot(),
+                timestamp=NOW,
+                ohlcv=(
+                    {
+                        "timestamp": NOW + timedelta(minutes=1),
+                        "open": 100.0,
+                        "high": 101.0,
+                        "low": 99.0,
+                        "close": 100.0,
+                        "volume": 10.0,
+                    },
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "future OHLCV"):
+                HistoricalReplayRunner(repository).run(
+                    (snapshot,),
+                    ReplayConfig(
+                        symbol="BTCUSDT",
+                        exchange="binance",
+                        timeframe="1m",
+                        runtime_version="526e72f",
+                    ),
+                )
+            self.assertEqual(repository.list_cases(), ())
+
+    def test_replay_outcome_completion_is_scoped_to_current_run_cases(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            repository = SQLiteLearningCaseRepository(
+                Path(directory) / "learning.sqlite3"
+            )
+            repository.initialize()
+            config = ReplayConfig(
+                symbol="BTCUSDT",
+                exchange="binance",
+                timeframe="5m",
+                runtime_version="526e72f",
+            )
+            first = tuple(
+                replace(
+                    make_snapshot(),
+                    event_id=f"first-{index}",
+                    timestamp=NOW + timedelta(minutes=5 * index),
+                    timeframe="5m",
+                    price=101.0 + index,
+                )
+                for index in range(13)
+            )
+            HistoricalReplayRunner(repository).run(first, config)
+            first_ids = tuple(case.case_id for case in repository.list_cases())
+            before = {
+                case_id: repository.list_outcomes(case_id)
+                for case_id in first_ids
+            }
+            second = tuple(
+                replace(
+                    make_snapshot(),
+                    event_id=f"second-{index}",
+                    timestamp=NOW + timedelta(hours=2, minutes=5 * index),
+                    timeframe="5m",
+                    price=201.0 + index,
+                )
+                for index in range(13)
+            )
+            HistoricalReplayRunner(repository).run(second, config)
+            self.assertEqual(
+                {
+                    case_id: repository.list_outcomes(case_id)
+                    for case_id in first_ids
+                },
+                before,
+            )

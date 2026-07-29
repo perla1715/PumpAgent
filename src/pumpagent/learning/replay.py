@@ -66,6 +66,7 @@ class HistoricalReplayRunner:
         failed = 0
         skipped = 0
         reasons: list[str] = []
+        run_case_ids: list[str] = []
         previous = None
         for snapshot in ordered:
             event = runtime.process_market_update(
@@ -103,7 +104,7 @@ class HistoricalReplayRunner:
             if event.runtime_status is RuntimeStatus.COMPLETED:
                 completed += 1
                 runtime.commit_runtime_continuity(event.event_id)
-                persistence.persist(
+                stored_case = persistence.persist(
                     event,
                     ingestion_timestamp=event.cycle_timestamp,
                     provenance={
@@ -112,6 +113,7 @@ class HistoricalReplayRunner:
                     },
                 )
                 stored += 1
+                run_case_ids.append(stored_case.case_id)
                 previous = event
             elif event.runtime_status is RuntimeStatus.REJECTED:
                 skipped += 1
@@ -119,7 +121,7 @@ class HistoricalReplayRunner:
             else:
                 failed += 1
                 reasons.extend(event.errors_or_warnings)
-        outcomes = self._complete_outcomes(ordered)
+        outcomes = self._complete_outcomes(ordered, tuple(run_case_ids))
         return ReplayRunSummary(
             processed_cycles=len(ordered),
             completed_cycles=completed,
@@ -130,10 +132,17 @@ class HistoricalReplayRunner:
             reasons=tuple(reasons),
         )
 
-    def _complete_outcomes(self, snapshots: tuple[MarketSnapshot, ...]) -> int:
+    def _complete_outcomes(
+        self,
+        snapshots: tuple[MarketSnapshot, ...],
+        case_ids: tuple[str, ...],
+    ) -> int:
         attribution = OutcomeAttributionService(self.repository)
         attached = 0
-        for case in self.repository.list_cases():
+        for case_id in case_ids:
+            case = self.repository.get_case(case_id)
+            if case is None:
+                raise ValueError("Replay case disappeared before outcome attribution.")
             future = tuple(
                 _outcome_observation(snapshot)
                 for snapshot in snapshots
@@ -176,12 +185,36 @@ def _validate_and_select(
             or item.timeframe != config.timeframe
         ):
             raise ValueError("Replay market identity mismatch.")
+        _validate_snapshot_has_no_future_data(item)
         if config.start is not None and item.timestamp < config.start:
             continue
         if config.end is not None and item.timestamp > config.end:
             continue
         selected.append(item)
     return tuple(selected)
+
+
+def _validate_snapshot_has_no_future_data(snapshot: MarketSnapshot) -> None:
+    seen: set[datetime] = set()
+    for candle in snapshot.ohlcv:
+        raw_timestamp = candle.get("timestamp")
+        if isinstance(raw_timestamp, str):
+            timestamp = datetime.fromisoformat(
+                raw_timestamp.replace("Z", "+00:00")
+            )
+        elif isinstance(raw_timestamp, datetime):
+            timestamp = raw_timestamp
+        else:
+            raise ValueError("Replay OHLCV timestamp is missing or invalid.")
+        if timestamp.tzinfo is None:
+            raise ValueError("Replay OHLCV timestamp must be timezone-aware.")
+        if timestamp > snapshot.timestamp:
+            raise ValueError(
+                "Replay snapshot contains future OHLCV data."
+            )
+        if timestamp in seen:
+            raise ValueError("Replay snapshot contains duplicate OHLCV timestamps.")
+        seen.add(timestamp)
 
 
 def _outcome_observation(snapshot: MarketSnapshot) -> dict[str, object]:

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import hashlib
+import json
 from math import isfinite
 from typing import Any, Mapping
 
@@ -19,6 +21,8 @@ LEARNING_CASE_SCHEMA_VERSION = "learning_case_v1"
 OUTCOME_RECORD_SCHEMA_VERSION = "outcome_record_v1"
 OUTCOME_COMPUTATION_VERSION = "outcome_metrics_v1"
 REVIEW_RECORD_SCHEMA_VERSION = "learning_review_v1"
+READINESS_ASSESSMENT_SCHEMA_VERSION = "learning_readiness_assessment_v1"
+READINESS_VALIDATOR_VERSION = "learning_readiness_validator_v1"
 SUPPORTED_HORIZONS_MINUTES = (5, 15, 30, 60)
 
 
@@ -55,6 +59,102 @@ class OutcomeLabel(str, Enum):
     DUMP_RECOVERY = "dump_recovery"
     RANGE_OR_CONTROL = "range_or_control"
     INSUFFICIENT_OUTCOME = "insufficient_outcome"
+
+
+class LearningReadinessStatus(str, Enum):
+    PENDING = "pending"
+    NOT_READY = "not_ready"
+    LEARNING_READY = "learning_ready"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True)
+class ReadinessCheck(SerializableMixin):
+    check_id: str
+    passed: bool
+    detail: str
+
+    def __post_init__(self) -> None:
+        _non_empty("check_id", self.check_id)
+        _non_empty("detail", self.detail)
+        if not isinstance(self.passed, bool):
+            raise ValueError("passed must be bool.")
+
+
+@dataclass(frozen=True)
+class LearningReadinessAssessment(SerializableMixin):
+    assessment_id: str
+    case_id: str
+    runtime_event_id: str
+    assessment_version: str
+    assessment_timestamp: datetime
+    readiness_status: LearningReadinessStatus
+    evaluated_outcome_horizon: int | None
+    canonical_payload_digest: str
+    outcome_record_id: str | None
+    label_policy_version: str
+    checks_performed: tuple[ReadinessCheck, ...]
+    failure_reasons: tuple[str, ...]
+    warnings: tuple[str, ...]
+    validator_version: str
+    review_status: str
+    technically_ready: bool
+    approved_for_evaluation: bool
+    approved_for_training: bool
+    manually_excluded: bool
+    administratively_blocked: bool
+    provenance: Mapping[str, Any]
+    schema_version: str = READINESS_ASSESSMENT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        freeze_dataclass_fields(self)
+        for name in (
+            "assessment_id",
+            "case_id",
+            "runtime_event_id",
+            "assessment_version",
+            "canonical_payload_digest",
+            "label_policy_version",
+            "validator_version",
+            "review_status",
+            "schema_version",
+        ):
+            _non_empty(name, getattr(self, name))
+        _aware("assessment_timestamp", self.assessment_timestamp)
+        if not isinstance(self.readiness_status, LearningReadinessStatus):
+            raise ValueError(
+                "readiness_status must be LearningReadinessStatus."
+            )
+        if (
+            self.evaluated_outcome_horizon is not None
+            and self.evaluated_outcome_horizon
+            not in SUPPORTED_HORIZONS_MINUTES
+        ):
+            raise ValueError("Unsupported readiness outcome horizon.")
+        if self.outcome_record_id is not None:
+            _non_empty("outcome_record_id", self.outcome_record_id)
+        if any(not isinstance(item, ReadinessCheck) for item in self.checks_performed):
+            raise ValueError("checks_performed must contain ReadinessCheck values.")
+        _strings("failure_reasons", self.failure_reasons)
+        _strings("warnings", self.warnings)
+        if self.technically_ready != (
+            self.readiness_status is LearningReadinessStatus.LEARNING_READY
+        ):
+            raise ValueError("technically_ready disagrees with readiness_status.")
+        if self.approved_for_training and not self.approved_for_evaluation:
+            raise ValueError("Training approval requires evaluation approval.")
+        if (self.manually_excluded or self.administratively_blocked) and (
+            self.approved_for_evaluation or self.approved_for_training
+        ):
+            raise ValueError("Excluded or blocked cases cannot be approved.")
+        if self.schema_version != READINESS_ASSESSMENT_SCHEMA_VERSION:
+            raise ValueError("Unsupported readiness assessment schema.")
+        if self.assessment_version != self.validator_version:
+            raise ValueError(
+                "assessment_version must equal validator_version."
+            )
+        if self.assessment_id != canonical_readiness_assessment_id(self):
+            raise ValueError("Non-canonical readiness assessment identity.")
 
 
 @dataclass(frozen=True)
@@ -224,3 +324,59 @@ def _strings(name: str, values: tuple[str, ...]) -> None:
         raise ValueError(f"{name} must contain non-empty strings.")
     if len(set(values)) != len(values):
         raise ValueError(f"{name} must contain unique values.")
+
+
+def canonical_readiness_assessment_id(
+    assessment: LearningReadinessAssessment,
+) -> str:
+    return build_readiness_assessment_id(
+        case_id=assessment.case_id,
+        runtime_event_id=assessment.runtime_event_id,
+        validator_version=assessment.validator_version,
+        canonical_payload_digest=assessment.canonical_payload_digest,
+        outcome_record_id=assessment.outcome_record_id,
+        label_policy_version=assessment.label_policy_version,
+        review_status=assessment.review_status,
+        manually_excluded=assessment.manually_excluded,
+        administratively_blocked=assessment.administratively_blocked,
+        provenance=assessment.provenance,
+    )
+
+
+def build_readiness_assessment_id(
+    *,
+    case_id: str,
+    runtime_event_id: str,
+    validator_version: str,
+    canonical_payload_digest: str,
+    outcome_record_id: str | None,
+    label_policy_version: str,
+    review_status: str,
+    manually_excluded: bool,
+    administratively_blocked: bool,
+    provenance: Mapping[str, Any],
+) -> str:
+    material = {
+        "case_id": case_id,
+        "runtime_event_id": runtime_event_id,
+        "validator_version": validator_version,
+        "runtime_schema": provenance.get("runtime_schema_version"),
+        "payload_digest": canonical_payload_digest,
+        "outcome_id": outcome_record_id,
+        "outcome_computation_version": provenance.get(
+            "outcome_computation_version"
+        ),
+        "label_policy_version": label_policy_version,
+        "review_status": review_status,
+        "manually_excluded": manually_excluded,
+        "administratively_blocked": administratively_blocked,
+    }
+    payload = json.dumps(
+        material,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"learning-readiness:{case_id}:{digest}"

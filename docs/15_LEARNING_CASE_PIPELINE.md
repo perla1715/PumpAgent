@@ -12,6 +12,7 @@ historical MarketSnapshot
 → later observations
 → OutcomeRecord
 → objective research label
+→ persisted LearningReadinessAssessment
 → deterministic JSONL dataset
 ```
 
@@ -20,6 +21,9 @@ explicitly invoked after Runtime completion; it is not inserted into
 `RuntimeOrchestrator`. Outcomes, reviews, labels, and export metadata are
 separate versioned records. They never rewrite the stored canonical event,
 execute trades, emit live signals, or update Runtime configuration.
+
+A stored case is not automatically suitable for learning. Dataset admission is
+owned exclusively by the persisted readiness assessment described below.
 
 ## LearningCase lifecycle
 
@@ -43,10 +47,12 @@ Excluded cases use `EXCLUDED`. This lifecycle is independent of RuntimeStatus.
 - `learning_cases`;
 - `outcome_records`;
 - `review_records`;
+- `readiness_assessments`;
 - `schema_metadata`.
 
-Case and Runtime event IDs are unique. One OutcomeRecord is allowed per case
-and horizon. Identical retries are accepted; conflicting content under an
+Case and Runtime event IDs are unique. Outcome versions are immutable and the
+repository selects one authoritative record per case and horizon
+deterministically. Identical retries are accepted; conflicting content under an
 existing identity raises an explicit conflict. Canonical Runtime payloads are
 never silently overwritten. SHA-256 payload digests support integrity checks.
 
@@ -90,11 +96,50 @@ are not persisted as completed cases.
 Thresholds are explicit `LabelPolicyConfig` values. Labels are research data,
 not Runtime decisions.
 
+## Learning readiness quality gate
+
+`learning_readiness_assessment_v1` is an immutable, persisted audit record.
+Its technical status is one of:
+
+- `PENDING`: reserved for a scheduled assessment that has not run;
+- `NOT_READY`: required information is missing, incomplete, or unsupported;
+- `LEARNING_READY`: every mandatory technical check passed;
+- `INVALID`: stored identities, digests, canonical content, or provenance are
+  inconsistent or corrupt.
+
+The `learning_readiness_validator_v1` checks the completed canonical
+RuntimeEvent, required sections, cross-section event/Episode/market identities,
+F-02 timestamp invariants, canonical digest, finite numeric values, supported
+schemas and Runtime version, replay or ingestion provenance, repository
+integrity, authoritative outcome identity/completeness/horizon/version, and a
+reproducible sufficient `objective_outcome_labels_v1` label.
+
+Technical readiness and human review are deliberately separate. An assessment
+records `technically_ready`, `approved_for_evaluation`,
+`approved_for_training`, `review_status`, and `manually_excluded`. A manual or
+administrative exclusion blocks every export even when technical checks pass.
+Pending human review permits the `evaluation` policy but does not permit the
+`training` policy. Training explicitly accepts only `reviewed`, `approved`, or
+`not_required`.
+
+Assessment identity incorporates the canonical payload digest, selected
+OutcomeRecord, Runtime schema, outcome computation version, label policy,
+validator version, review state, and exclusion state. Repeating identical input
+is idempotent. A relevant version, authoritative outcome, review, or exclusion
+change creates a new immutable assessment while preserving history. The latest
+assessment by timestamp and identity is authoritative after restart.
+
 ## Dataset export
 
-JSONL rows are ordered by cycle timestamp and case ID. Each row includes the
+JSONL export requires a named readiness policy and never infers readiness from
+case or outcome status. Cases without an authoritative assessment, cases with
+`NOT_READY`/`INVALID` status, manual exclusions, and training cases without an
+allowed review status are omitted with deterministic manifest reasons.
+
+Rows are ordered by cycle timestamp and case ID. Each row includes the
 canonical Runtime event, Scenario Probability, Confidence, Decision, outcomes,
-labels, review state, Runtime version, and schema/policy versions.
+labels, readiness assessment identity and policy, review state, Runtime
+version, and schema/policy versions.
 
 The adjacent manifest records export identity, deterministic content digest,
 case count, markets, source date range, Runtime version, schema versions,
@@ -111,8 +156,16 @@ PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 replay \
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
   complete-outcomes --input future-observations.json
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 counts
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  assess-readiness --case-id case-agent-cycle-id --horizon 60
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  assess-all --horizon 60
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  readiness-counts
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  explain-readiness --case-id case-agent-cycle-id
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 export \
-  --output dataset.jsonl --runtime-version 526e72f
+  --output dataset.jsonl --runtime-version 526e72f --policy evaluation
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 validate
 ```
 

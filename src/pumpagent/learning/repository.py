@@ -15,6 +15,8 @@ from pumpagent.learning.domain import (
     CompletenessStatus,
     DatasetEligibility,
     LearningCase,
+    LearningReadinessAssessment,
+    LearningReadinessStatus,
     OutcomeRecord,
     OutcomeStatus,
     ReviewRecord,
@@ -42,6 +44,13 @@ class LearningCaseRepository(Protocol):
     def list_cases(self, status: CaseStatus | None = None) -> tuple[LearningCase, ...]: ...
     def list_dataset_eligible(self) -> tuple[LearningCase, ...]: ...
     def record_review(self, review: ReviewRecord) -> ReviewRecord: ...
+    def latest_review(self, case_id: str) -> ReviewRecord | None: ...
+    def store_readiness_assessment(
+        self, assessment: LearningReadinessAssessment
+    ) -> LearningReadinessAssessment: ...
+    def latest_readiness_assessment(
+        self, case_id: str
+    ) -> LearningReadinessAssessment | None: ...
 
 
 class SQLiteLearningCaseRepository:
@@ -139,6 +148,19 @@ class SQLiteLearningCaseRepository:
                 if case.runtime_event_id != outcome.source_runtime_event_id:
                     raise LearningCaseConflictError(
                         "Outcome Runtime event identity conflicts with its case."
+                    )
+                if outcome.source_cycle_timestamp != case.cycle_timestamp:
+                    raise LearningCaseConflictError(
+                        "Outcome source cycle timestamp conflicts with its case."
+                    )
+                expected_identity = {
+                    "symbol": case.symbol,
+                    "exchange": case.exchange,
+                    "timeframe": case.timeframe,
+                }
+                if dict(outcome.source_data_identity) != expected_identity:
+                    raise LearningCaseConflictError(
+                        "Outcome market identity conflicts with its case."
                     )
                 existing = connection.execute(
                     "SELECT payload_digest FROM outcome_records "
@@ -261,6 +283,108 @@ class SQLiteLearningCaseRepository:
         except sqlite3.Error as exc:
             raise LearningCaseStorageError(str(exc)) from exc
 
+    def latest_review(self, case_id: str) -> ReviewRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM review_records WHERE case_id = ? "
+                "ORDER BY reviewed_at DESC, rowid DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+        return None if row is None else _review_from_dict(json.loads(row[0]))
+
+    def store_readiness_assessment(
+        self, assessment: LearningReadinessAssessment
+    ) -> LearningReadinessAssessment:
+        payload = _canonical_json(assessment.to_dict())
+        digest = _digest(payload)
+        try:
+            with self._connect() as connection:
+                case = self._get_case(connection, assessment.case_id)
+                if case is None:
+                    raise LearningCaseStorageError(
+                        "Readiness source case does not exist."
+                    )
+                if case.runtime_event_id != assessment.runtime_event_id:
+                    raise LearningCaseConflictError(
+                        "Readiness Runtime event identity conflicts with its case."
+                    )
+                existing = connection.execute(
+                    "SELECT payload, payload_digest FROM readiness_assessments "
+                    "WHERE assessment_id = ?",
+                    (assessment.assessment_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing[1] != digest:
+                        raise LearningCaseConflictError(
+                            "Conflicting readiness assessment identity."
+                        )
+                    return _readiness_from_dict(json.loads(existing[0]))
+                connection.execute(
+                    "INSERT INTO readiness_assessments("
+                    "assessment_id, case_id, payload, payload_digest, "
+                    "readiness_status, assessment_timestamp"
+                    ") VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        assessment.assessment_id,
+                        assessment.case_id,
+                        payload,
+                        digest,
+                        assessment.readiness_status.value,
+                        assessment.assessment_timestamp.isoformat(),
+                    ),
+                )
+                return assessment
+        except (LearningCaseConflictError, LearningCaseStorageError):
+            raise
+        except sqlite3.Error as exc:
+            raise LearningCaseStorageError(str(exc)) from exc
+
+    def list_readiness_assessments(
+        self, case_id: str
+    ) -> tuple[LearningReadinessAssessment, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM readiness_assessments WHERE case_id = ? "
+                "ORDER BY assessment_timestamp, rowid",
+                (case_id,),
+            ).fetchall()
+        return tuple(_readiness_from_dict(json.loads(row[0])) for row in rows)
+
+    def latest_readiness_assessment(
+        self, case_id: str
+    ) -> LearningReadinessAssessment | None:
+        assessments = self.list_readiness_assessments(case_id)
+        return assessments[-1] if assessments else None
+
+    def list_cases_by_readiness_status(
+        self, status: LearningReadinessStatus
+    ) -> tuple[LearningCase, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT lc.payload
+                FROM learning_cases lc
+                JOIN readiness_assessments ra ON ra.case_id = lc.case_id
+                WHERE ra.assessment_id = (
+                    SELECT ra2.assessment_id FROM readiness_assessments ra2
+                    WHERE ra2.case_id = lc.case_id
+                    ORDER BY ra2.assessment_timestamp DESC,
+                             ra2.rowid DESC LIMIT 1
+                ) AND ra.readiness_status = ?
+                ORDER BY lc.cycle_timestamp, lc.case_id
+                """,
+                (status.value,),
+            ).fetchall()
+        return tuple(_case_from_dict(json.loads(row[0])) for row in rows)
+
+    def case_payload_digest(self, case_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_digest FROM learning_cases WHERE case_id = ?",
+                (case_id,),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
     def integrity_check(self) -> tuple[bool, tuple[str, ...]]:
         errors: list[str] = []
         with self._connect() as connection:
@@ -277,6 +401,16 @@ class SQLiteLearningCaseRepository:
             ):
                 if _digest(payload) != digest:
                     errors.append("OutcomeRecord payload digest mismatch.")
+            for payload, digest in connection.execute(
+                "SELECT payload, payload_digest FROM review_records"
+            ):
+                if _digest(payload) != digest:
+                    errors.append("ReviewRecord payload digest mismatch.")
+            for payload, digest in connection.execute(
+                "SELECT payload, payload_digest FROM readiness_assessments"
+            ):
+                if _digest(payload) != digest:
+                    errors.append("Readiness assessment payload digest mismatch.")
         return not errors, tuple(errors)
 
     def _refresh_case_status(
@@ -351,7 +485,13 @@ class SQLiteLearningCaseRepository:
 
 
 def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def _same_case_origin(stored: LearningCase, candidate: LearningCase) -> bool:
@@ -472,6 +612,73 @@ def _outcome_from_dict(value: dict[str, object]) -> OutcomeRecord:
     )
 
 
+def _review_from_dict(value: dict[str, object]) -> ReviewRecord:
+    return ReviewRecord(
+        review_id=str(value["review_id"]),
+        case_id=str(value["case_id"]),
+        review_status=str(value["review_status"]),
+        annotation=(
+            str(value["annotation"])
+            if value.get("annotation") is not None
+            else None
+        ),
+        tags=tuple(value["tags"]),  # type: ignore[arg-type]
+        reviewed_by=str(value["reviewed_by"]),
+        reviewed_at=datetime.fromisoformat(str(value["reviewed_at"])),
+        schema_version=str(value["schema_version"]),
+    )
+
+
+def _readiness_from_dict(
+    value: dict[str, object],
+) -> LearningReadinessAssessment:
+    from pumpagent.learning.domain import ReadinessCheck
+
+    return LearningReadinessAssessment(
+        assessment_id=str(value["assessment_id"]),
+        case_id=str(value["case_id"]),
+        runtime_event_id=str(value["runtime_event_id"]),
+        assessment_version=str(value["assessment_version"]),
+        assessment_timestamp=datetime.fromisoformat(
+            str(value["assessment_timestamp"])
+        ),
+        readiness_status=LearningReadinessStatus(
+            str(value["readiness_status"])
+        ),
+        evaluated_outcome_horizon=(
+            int(value["evaluated_outcome_horizon"])
+            if value.get("evaluated_outcome_horizon") is not None
+            else None
+        ),
+        canonical_payload_digest=str(value["canonical_payload_digest"]),
+        outcome_record_id=(
+            str(value["outcome_record_id"])
+            if value.get("outcome_record_id") is not None
+            else None
+        ),
+        label_policy_version=str(value["label_policy_version"]),
+        checks_performed=tuple(
+            ReadinessCheck(
+                check_id=str(item["check_id"]),
+                passed=bool(item["passed"]),
+                detail=str(item["detail"]),
+            )
+            for item in value["checks_performed"]  # type: ignore[union-attr]
+        ),
+        failure_reasons=tuple(value["failure_reasons"]),  # type: ignore[arg-type]
+        warnings=tuple(value["warnings"]),  # type: ignore[arg-type]
+        validator_version=str(value["validator_version"]),
+        review_status=str(value["review_status"]),
+        technically_ready=bool(value["technically_ready"]),
+        approved_for_evaluation=bool(value["approved_for_evaluation"]),
+        approved_for_training=bool(value["approved_for_training"]),
+        manually_excluded=bool(value["manually_excluded"]),
+        administratively_blocked=bool(value["administratively_blocked"]),
+        provenance=value["provenance"],  # type: ignore[arg-type]
+        schema_version=str(value["schema_version"]),
+    )
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_metadata (
     key TEXT PRIMARY KEY,
@@ -504,6 +711,15 @@ CREATE TABLE IF NOT EXISTS review_records (
     payload TEXT NOT NULL,
     payload_digest TEXT NOT NULL,
     reviewed_at TEXT NOT NULL,
+    FOREIGN KEY(case_id) REFERENCES learning_cases(case_id)
+);
+CREATE TABLE IF NOT EXISTS readiness_assessments (
+    assessment_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    readiness_status TEXT NOT NULL,
+    assessment_timestamp TEXT NOT NULL,
     FOREIGN KEY(case_id) REFERENCES learning_cases(case_id)
 );
 """
