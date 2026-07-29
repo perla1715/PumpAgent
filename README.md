@@ -102,7 +102,9 @@ Future expansion milestones:
 - Advanced Structure reasoning
 - Advanced Market Efficiency reasoning
 
-Learning Memory is not part of the current Runtime Orchestrator path.
+Learning Memory is not part of the Runtime Orchestrator path. The F-03 offline
+learning pipeline can explicitly persist completed RuntimeEvents, attribute
+later objective outcomes, and export reproducible research datasets.
 
 ---
 
@@ -121,6 +123,7 @@ Learning Memory is not part of the current Runtime Orchestrator path.
 - [Scanner V2 Output Schema](docs/scanner_v2_output_schema.json)
 - [Scanner V2 Sample Output](docs/scanner_v2_sample_output.json)
 - [Research Architecture](docs/research/README.md)
+- [Learning Case Pipeline](docs/15_LEARNING_CASE_PIPELINE.md)
 
 ---
 
@@ -166,15 +169,25 @@ Implemented and tested foundations include:
 - Bybit raw payload normalizer;
 - Runtime Bridge from validated Live Data input to `MarketSnapshot`.
 
+Readiness:
+
+- Runtime analytical pipeline: implemented and validated;
+- learning-case collection: available through explicit SQLite persistence and
+  historical replay;
+- outcome attribution: available for deterministic 5m, 15m, 30m, and 60m
+  research horizons;
+- model training: not implemented.
+
 Current limitations:
 
 - no trading execution;
 - no autonomous trading signals;
 - no WebSocket streaming;
 - no private exchange API access;
-- no persistence;
+- no live Runtime persistence hook;
 - no Research Agent execution;
-- no Learning Memory orchestration inside the Runtime Orchestrator.
+- no Learning Memory orchestration inside the Runtime Orchestrator;
+- no trained model or automatic Runtime self-modification.
 
 Documentation is synchronized after major architecture and implementation
 milestones.
