@@ -100,7 +100,9 @@ input produces `INSUFFICIENT_OUTCOME`.
 
 ## Learning readiness quality gate
 
-`learning_readiness_assessment_v1` is an immutable, persisted audit record.
+`learning_readiness_assessment_v2` is the current immutable, persisted audit
+record. Earlier v1 assessments remain readable audit history and cannot gain
+v2 authority.
 Its technical status is one of:
 
 - `PENDING`: reserved for a scheduled assessment that has not run;
@@ -122,8 +124,15 @@ records `technically_ready`, `approved_for_evaluation`,
 `approved_for_training`, `review_status`, and `manually_excluded`. A manual or
 administrative exclusion blocks every export even when technical checks pass.
 Pending human review permits the `evaluation` policy but does not permit the
-`training` policy. Training explicitly accepts only `reviewed`, `approved`, or
-`not_required`.
+`training` policy. Training explicitly accepts `approved` or `not_required`.
+
+The canonical review statuses are `pending`, `approved`, `rejected`,
+`excluded`, `blocked`, and `not_required`. Review tags are descriptive only;
+recognized governance tags that contradict the explicit status are rejected.
+The current authoritative review is selected by review timestamp and canonical
+review ID, never insertion order. `excluded` establishes manual exclusion and
+`blocked` establishes an administrative block. Both preserve technical
+readiness but force evaluation and training authorization to false.
 
 Assessment identity incorporates the canonical payload digest, selected
 OutcomeRecord, Runtime schema, outcome computation version, label policy,
@@ -145,6 +154,11 @@ recomputes them from current stored facts before insertion. Public constructors
 and public identity builders therefore cannot certify readiness. Dataset
 authorization again derives current facts and requires an exact authenticated,
 fresh assessment.
+
+Review ID, review timestamp, canonical review status, approval state, manual
+exclusion, and administrative block are bound into the dependency fingerprint.
+Every governance transition makes prior readiness stale and requires
+reassessment; prior assessments remain immutable audit history.
 
 ## Dataset export
 
@@ -183,6 +197,14 @@ PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
   assess-all --horizon 60
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
   readiness-counts
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  review-case --case-id case-agent-cycle-id --status approved \
+  --reviewed-by human-reviewer
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  review-case --case-id case-agent-cycle-id --status excluded \
+  --reviewed-by human-reviewer
+PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
+  governance-state --case-id case-agent-cycle-id
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 \
   explain-readiness --case-id case-agent-cycle-id
 PYTHONPATH=src python3 -m pumpagent.learning --store cases.sqlite3 export \

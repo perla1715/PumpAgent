@@ -15,7 +15,9 @@ from pumpagent.learning.domain import (
     CaseStatus,
     CompletenessStatus,
     DatasetEligibility,
+    GovernanceState,
     LearningCase,
+    LearningReviewStatus,
     LearningReadinessAssessment,
     LearningReadinessStatus,
     OutcomeRecord,
@@ -46,6 +48,7 @@ class LearningCaseRepository(Protocol):
     def list_dataset_eligible(self) -> tuple[LearningCase, ...]: ...
     def record_review(self, review: ReviewRecord) -> ReviewRecord: ...
     def latest_review(self, case_id: str) -> ReviewRecord | None: ...
+    def current_governance(self, case_id: str) -> GovernanceState: ...
     def store_readiness_assessment(
         self, assessment: LearningReadinessAssessment
     ) -> LearningReadinessAssessment: ...
@@ -314,6 +317,61 @@ class SQLiteLearningCaseRepository:
                 (case_id,),
             ).fetchone()
         return None if row is None else _review_from_dict(json.loads(row[0]))
+
+    def current_governance(self, case_id: str) -> GovernanceState:
+        case = self.get_case(case_id)
+        if case is None:
+            raise LearningCaseStorageError(
+                "Governance source case does not exist."
+            )
+        review = self.latest_review(case_id)
+        if review is not None:
+            status = LearningReviewStatus(review.review_status)
+            review_id = review.review_id
+            review_timestamp = review.reviewed_at
+        else:
+            status = {
+                ReviewStatus.PENDING: LearningReviewStatus.PENDING,
+                ReviewStatus.NOT_REQUIRED: (
+                    LearningReviewStatus.NOT_REQUIRED
+                ),
+                ReviewStatus.REVIEWED: LearningReviewStatus.APPROVED,
+            }[case.learning_metadata.review_status]
+            review_id = None
+            review_timestamp = None
+        legacy_manual = any(
+            "human" in reason.lower() or "manual" in reason.lower()
+            for reason in case.exclusion_reasons
+        )
+        manually_excluded = (
+            status is LearningReviewStatus.EXCLUDED or legacy_manual
+        )
+        legacy_block = (
+            not legacy_manual
+            and (
+                case.case_status is CaseStatus.EXCLUDED
+                or case.dataset_eligibility is DatasetEligibility.EXCLUDED
+                or bool(case.exclusion_reasons)
+            )
+        )
+        administratively_blocked = (
+            not manually_excluded
+            and (
+                status is LearningReviewStatus.BLOCKED
+                or legacy_block
+            )
+        )
+        return GovernanceState(
+            review_status=status,
+            manually_excluded=manually_excluded,
+            administratively_blocked=administratively_blocked,
+            review_approved=status is LearningReviewStatus.APPROVED,
+            review_not_required=(
+                status is LearningReviewStatus.NOT_REQUIRED
+            ),
+            review_id=review_id,
+            review_timestamp=review_timestamp,
+        )
 
     def store_readiness_assessment(
         self, assessment: LearningReadinessAssessment
@@ -718,10 +776,13 @@ def _outcome_from_dict(value: dict[str, object]) -> OutcomeRecord:
 
 
 def _review_from_dict(value: dict[str, object]) -> ReviewRecord:
+    review_status = str(value["review_status"])
+    if review_status == "reviewed":
+        review_status = LearningReviewStatus.APPROVED.value
     return ReviewRecord(
         review_id=str(value["review_id"]),
         case_id=str(value["case_id"]),
-        review_status=str(value["review_status"]),
+        review_status=review_status,
         annotation=(
             str(value["annotation"])
             if value.get("annotation") is not None

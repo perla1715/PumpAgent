@@ -21,7 +21,8 @@ LEARNING_CASE_SCHEMA_VERSION = "learning_case_v1"
 OUTCOME_RECORD_SCHEMA_VERSION = "outcome_record_v1"
 OUTCOME_COMPUTATION_VERSION = "outcome_metrics_v1"
 REVIEW_RECORD_SCHEMA_VERSION = "learning_review_v1"
-READINESS_ASSESSMENT_SCHEMA_VERSION = "learning_readiness_assessment_v1"
+READINESS_ASSESSMENT_SCHEMA_VERSION = "learning_readiness_assessment_v2"
+LEGACY_READINESS_ASSESSMENT_SCHEMA_VERSION = "learning_readiness_assessment_v1"
 READINESS_VALIDATOR_VERSION = "learning_readiness_validator_v2"
 SUPPORTED_HORIZONS_MINUTES = (5, 15, 30, 60)
 
@@ -66,6 +67,50 @@ class LearningReadinessStatus(str, Enum):
     NOT_READY = "not_ready"
     LEARNING_READY = "learning_ready"
     INVALID = "invalid"
+
+
+class LearningReviewStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXCLUDED = "excluded"
+    BLOCKED = "blocked"
+    NOT_REQUIRED = "not_required"
+
+
+@dataclass(frozen=True)
+class GovernanceState(SerializableMixin):
+    review_status: LearningReviewStatus
+    manually_excluded: bool
+    administratively_blocked: bool
+    review_approved: bool
+    review_not_required: bool
+    review_id: str | None
+    review_timestamp: datetime | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.review_status, LearningReviewStatus):
+            raise ValueError("review_status must be LearningReviewStatus.")
+        if self.review_id is not None:
+            _non_empty("review_id", self.review_id)
+        if self.review_timestamp is not None:
+            _aware("review_timestamp", self.review_timestamp)
+        if self.manually_excluded and self.administratively_blocked:
+            raise ValueError(
+                "Manual exclusion and administrative block are exclusive."
+            )
+        if (
+            self.review_approved
+            != (self.review_status is LearningReviewStatus.APPROVED)
+        ):
+            raise ValueError("review_approved disagrees with review_status.")
+        if (
+            self.review_not_required
+            != (self.review_status is LearningReviewStatus.NOT_REQUIRED)
+        ):
+            raise ValueError(
+                "review_not_required disagrees with review_status."
+            )
 
 
 @dataclass(frozen=True)
@@ -147,7 +192,10 @@ class LearningReadinessAssessment(SerializableMixin):
             self.approved_for_evaluation or self.approved_for_training
         ):
             raise ValueError("Excluded or blocked cases cannot be approved.")
-        if self.schema_version != READINESS_ASSESSMENT_SCHEMA_VERSION:
+        if self.schema_version not in {
+            READINESS_ASSESSMENT_SCHEMA_VERSION,
+            LEGACY_READINESS_ASSESSMENT_SCHEMA_VERSION,
+        }:
             raise ValueError("Unsupported readiness assessment schema.")
         if self.assessment_version != self.validator_version:
             raise ValueError(
@@ -294,6 +342,11 @@ class ReviewRecord(SerializableMixin):
     schema_version: str = REVIEW_RECORD_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        try:
+            status = LearningReviewStatus(self.review_status)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Unsupported review_status.") from exc
+        object.__setattr__(self, "review_status", status.value)
         freeze_dataclass_fields(self)
         for name in (
             "review_id",
@@ -305,6 +358,17 @@ class ReviewRecord(SerializableMixin):
             _non_empty(name, getattr(self, name))
         _aware("reviewed_at", self.reviewed_at)
         _strings("tags", self.tags)
+        governance_tags = {
+            "manual-exclusion": LearningReviewStatus.EXCLUDED,
+            "administrative-block": LearningReviewStatus.BLOCKED,
+            "approved": LearningReviewStatus.APPROVED,
+            "rejected": LearningReviewStatus.REJECTED,
+        }
+        for tag, implied_status in governance_tags.items():
+            if tag in self.tags and status is not implied_status:
+                raise ValueError(
+                    "Review tag contradicts canonical review_status."
+                )
         if self.annotation is not None:
             _non_empty("annotation", self.annotation)
 
@@ -340,6 +404,7 @@ def canonical_readiness_assessment_id(
         manually_excluded=assessment.manually_excluded,
         administratively_blocked=assessment.administratively_blocked,
         provenance=assessment.provenance,
+        schema_version=assessment.schema_version,
     )
 
 
@@ -355,6 +420,7 @@ def build_readiness_assessment_id(
     manually_excluded: bool,
     administratively_blocked: bool,
     provenance: Mapping[str, Any],
+    schema_version: str = READINESS_ASSESSMENT_SCHEMA_VERSION,
 ) -> str:
     material = {
         "case_id": case_id,
@@ -371,6 +437,13 @@ def build_readiness_assessment_id(
         "manually_excluded": manually_excluded,
         "administratively_blocked": administratively_blocked,
     }
+    if (
+        schema_version == READINESS_ASSESSMENT_SCHEMA_VERSION
+        and provenance.get("dependency_fingerprint") is not None
+    ):
+        material["dependency_fingerprint"] = provenance.get(
+            "dependency_fingerprint"
+        )
     payload = json.dumps(
         material,
         sort_keys=True,

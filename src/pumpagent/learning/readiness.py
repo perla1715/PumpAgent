@@ -45,7 +45,7 @@ EVALUATION_POLICY = ReadinessPolicy(
 TRAINING_POLICY = ReadinessPolicy(
     name="training",
     require_human_approval=True,
-    allowed_review_statuses=frozenset({"reviewed", "approved", "not_required"}),
+    allowed_review_statuses=frozenset({"approved", "not_required"}),
 )
 READINESS_POLICIES = {
     EVALUATION_POLICY.name: EVALUATION_POLICY,
@@ -221,26 +221,36 @@ class LearningReadinessService:
                 "Selected-horizon label is supported, sufficient, and reproducible.",
             )
 
-        latest_review = self.repository.latest_review(case.case_id)
-        review_status = (
-            latest_review.review_status
-            if latest_review is not None
-            else case.learning_metadata.review_status.value
-        )
-        manually_excluded = any(
-            "human" in reason.lower() or "manual" in reason.lower()
-            for reason in case.exclusion_reasons
-        )
-        administratively_blocked = (
-            not manually_excluded
-            and (
-                case.case_status.value == "excluded"
-                or case.dataset_eligibility.value == "excluded"
-                or bool(case.exclusion_reasons)
+        governance = self.repository.current_governance(case.case_id)
+        review_status = governance.review_status.value
+        manually_excluded = governance.manually_excluded
+        administratively_blocked = governance.administratively_blocked
+        checks.extend(
+            (
+                ReadinessCheck(
+                    "manual_exclusion_state",
+                    not manually_excluded,
+                    (
+                        "Current governance permits dataset consideration."
+                        if not manually_excluded
+                        else "Current governance manually excludes the case."
+                    ),
+                ),
+                ReadinessCheck(
+                    "administrative_block_state",
+                    not administratively_blocked,
+                    (
+                        "Current governance has no administrative block."
+                        if not administratively_blocked
+                        else "Current governance administratively blocks the case."
+                    ),
+                ),
             )
         )
         if manually_excluded:
-            warnings.append("Case is manually or administratively excluded.")
+            warnings.append("manual_exclusion")
+        if administratively_blocked:
+            warnings.append("administrative_block")
 
         dependencies_pending = (
             outcome is None
@@ -273,8 +283,8 @@ class LearningReadinessService:
             case.ingestion_timestamp,
             outcome.creation_timestamp if outcome else case.ingestion_timestamp,
             (
-                latest_review.reviewed_at
-                if latest_review is not None
+                governance.review_timestamp
+                if governance.review_timestamp is not None
                 else case.ingestion_timestamp
             ),
         )
@@ -299,6 +309,16 @@ class LearningReadinessService:
                     "label_policy_version": LABEL_POLICY_VERSION,
                     "validator_version": self.validator_version,
                     "review_status": review_status,
+                    "review_id": governance.review_id,
+                    "review_timestamp": (
+                        governance.review_timestamp.isoformat()
+                        if governance.review_timestamp is not None
+                        else None
+                    ),
+                    "review_approved": governance.review_approved,
+                    "review_not_required": (
+                        governance.review_not_required
+                    ),
                     "manually_excluded": manually_excluded,
                     "administratively_blocked": administratively_blocked,
                 }

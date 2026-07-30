@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pumpagent.learning.domain import SUPPORTED_HORIZONS_MINUTES
+from pumpagent.learning.domain import (
+    SUPPORTED_HORIZONS_MINUTES,
+    LearningReviewStatus,
+    ReviewRecord,
+)
 from pumpagent.learning.export import export_jsonl_dataset
 from pumpagent.learning.outcomes import OutcomeAttributionService
 from pumpagent.learning.replay import HistoricalReplayRunner, ReplayConfig
@@ -94,6 +99,54 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 counts[status] = counts.get(status, 0) + 1
             print(json.dumps(counts, sort_keys=True))
+        elif args.command == "review-case":
+            repository.initialize()
+            reviewed_at = (
+                _time(args.reviewed_at)
+                if args.reviewed_at
+                else datetime.now(timezone.utc)
+            )
+            identity = "|".join(
+                (
+                    args.case_id,
+                    args.status,
+                    reviewed_at.isoformat(),
+                    args.reviewed_by,
+                )
+            )
+            review = repository.record_review(
+                ReviewRecord(
+                    review_id=(
+                        "learning-review:"
+                        + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+                    ),
+                    case_id=args.case_id,
+                    review_status=args.status,
+                    annotation=args.annotation,
+                    tags=tuple(args.tag),
+                    reviewed_by=args.reviewed_by,
+                    reviewed_at=reviewed_at,
+                )
+            )
+            governance = repository.current_governance(args.case_id)
+            print(
+                json.dumps(
+                    {
+                        "review": review.to_dict(),
+                        "governance": governance.to_dict(),
+                        "readiness_reassessment_required": True,
+                    },
+                    sort_keys=True,
+                )
+            )
+        elif args.command == "governance-state":
+            repository.initialize()
+            print(
+                json.dumps(
+                    repository.current_governance(args.case_id).to_dict(),
+                    sort_keys=True,
+                )
+            )
         elif args.command == "explain-readiness":
             repository.initialize()
             assessment = repository.latest_readiness_assessment(args.case_id)
@@ -177,6 +230,19 @@ def _parser() -> argparse.ArgumentParser:
         default="learning_readiness_validator_v2",
     )
     commands.add_parser("readiness-counts")
+    review = commands.add_parser("review-case")
+    review.add_argument("--case-id", required=True)
+    review.add_argument(
+        "--status",
+        required=True,
+        choices=tuple(item.value for item in LearningReviewStatus),
+    )
+    review.add_argument("--reviewed-by", required=True)
+    review.add_argument("--reviewed-at")
+    review.add_argument("--annotation")
+    review.add_argument("--tag", action="append", default=[])
+    governance = commands.add_parser("governance-state")
+    governance.add_argument("--case-id", required=True)
     explain = commands.add_parser("explain-readiness")
     explain.add_argument("--case-id", required=True)
     export = commands.add_parser("export")
