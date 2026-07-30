@@ -433,6 +433,17 @@ class LabelsAndExportTests(TestCase):
                 horizon_minutes=horizon,
                 creation_timestamp=NOW + timedelta(minutes=horizon),
             )
+        self.repository.record_review(
+            ReviewRecord(
+                review_id=f"review:{self.case.case_id}:export",
+                case_id=self.case.case_id,
+                review_status="approved",
+                annotation=None,
+                tags=(),
+                reviewed_by="export-reviewer",
+                reviewed_at=NOW + timedelta(hours=2),
+            )
+        )
         LearningReadinessService(self.repository).assess(self.case.case_id)
         first = export_jsonl_dataset(
             self.repository,

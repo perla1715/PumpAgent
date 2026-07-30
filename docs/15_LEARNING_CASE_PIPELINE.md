@@ -123,8 +123,9 @@ Technical readiness and human review are deliberately separate. An assessment
 records `technically_ready`, `approved_for_evaluation`,
 `approved_for_training`, `review_status`, and `manually_excluded`. A manual or
 administrative exclusion blocks every export even when technical checks pass.
-Pending human review permits the `evaluation` policy but does not permit the
-`training` policy. Training explicitly accepts `approved` or `not_required`.
+Both the `evaluation` and `training` policies explicitly accept only
+`approved` or `not_required`. Pending and rejected reviews block both policies.
+Technical readiness does not imply dataset authorization.
 
 The canonical review statuses are `pending`, `approved`, `rejected`,
 `excluded`, `blocked`, and `not_required`. Review tags are descriptive only;
@@ -165,8 +166,9 @@ reassessment; prior assessments remain immutable audit history.
 JSONL export requires a named readiness policy and explicit outcome horizon.
 It never infers readiness from
 case or outcome status. Cases without an authoritative assessment, cases with
-`NOT_READY`/`INVALID` status, manual exclusions, and training cases without an
-allowed review status are omitted with deterministic manifest reasons.
+`NOT_READY`/`INVALID` status, manual exclusions, and cases without an allowed
+review status are omitted with deterministic manifest reasons. Governance
+transitions require reassessment before either policy can authorize export.
 Wrong horizons, unsupported validators or label policies, stale case digests,
 stale outcomes, and unauthenticated assessments are also excluded with stable
 machine-readable reason codes.

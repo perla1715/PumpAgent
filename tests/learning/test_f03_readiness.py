@@ -69,7 +69,7 @@ class LearningReadinessTests(TestCase):
             LearningReadinessStatus.LEARNING_READY,
         )
         self.assertTrue(first.technically_ready)
-        self.assertTrue(first.approved_for_evaluation)
+        self.assertFalse(first.approved_for_evaluation)
         self.assertFalse(first.approved_for_training)
         self.assertEqual(first, second)
         self.assertEqual(
@@ -293,6 +293,17 @@ class LearningReadinessTests(TestCase):
             missing["exclusions_by_reason"],
             {"missing_readiness_assessment": 1},
         )
+        self.repository.record_review(
+            ReviewRecord(
+                review_id="review:evaluation-approved",
+                case_id=self.case.case_id,
+                review_status="approved",
+                annotation=None,
+                tags=(),
+                reviewed_by="reviewer",
+                reviewed_at=NOW + timedelta(hours=2),
+            )
+        )
         LearningReadinessService(self.repository).assess(self.case.case_id)
         evaluation = export_jsonl_dataset(
             self.repository,
@@ -309,11 +320,7 @@ class LearningReadinessTests(TestCase):
             readiness_policy="training",
         )
         self.assertEqual(evaluation["case_count"], 1)
-        self.assertEqual(training["case_count"], 0)
-        self.assertEqual(
-            training["exclusions_by_reason"],
-            {"review_not_approved": 1},
-        )
+        self.assertEqual(training["case_count"], 1)
 
     def test_stale_digest_and_wrong_horizon_cannot_authorize_export(
         self,
@@ -542,6 +549,202 @@ class LearningReadinessTests(TestCase):
                         administratively_blocked=False,
                         provenance=forged_values["provenance"],
                     )
+                )
+                forged = type(current)(**forged_values)
+                with self.assertRaises(LearningCaseConflictError):
+                    repository.store_readiness_assessment(forged)
+
+    def test_complete_review_policy_matrix(self) -> None:
+        expected = {
+            "pending": (False, False, "review_not_approved"),
+            "approved": (True, True, None),
+            "rejected": (False, False, "review_not_approved"),
+            "excluded": (False, False, "manual_exclusion"),
+            "blocked": (False, False, "administrative_block"),
+            "not_required": (True, True, None),
+        }
+        for status, (
+            evaluation_allowed,
+            training_allowed,
+            reason,
+        ) in expected.items():
+            with self.subTest(status=status):
+                path = Path(self.temp.name) / f"matrix-{status}.sqlite3"
+                repository = SQLiteLearningCaseRepository(path)
+                repository.initialize()
+                case = LearningCasePersistenceService(repository).persist(
+                    completed_event(),
+                    ingestion_timestamp=NOW,
+                    provenance={
+                        "source": "policy_matrix",
+                        "runtime_version": "526e72f",
+                    },
+                )
+                OutcomeAttributionService(repository).attribute(
+                    case,
+                    future_observations(),
+                    horizon_minutes=60,
+                    creation_timestamp=NOW + timedelta(minutes=60),
+                )
+                repository.record_review(
+                    ReviewRecord(
+                        review_id=f"review:{status}",
+                        case_id=case.case_id,
+                        review_status=status,
+                        annotation=None,
+                        tags=(),
+                        reviewed_by="policy-reviewer",
+                        reviewed_at=NOW + timedelta(hours=2),
+                    )
+                )
+                assessment = LearningReadinessService(repository).assess(
+                    case.case_id
+                )
+                evaluation = export_jsonl_dataset(
+                    repository,
+                    Path(self.temp.name) / f"matrix-{status}-evaluation.jsonl",
+                    runtime_version="526e72f",
+                    horizon_minutes=60,
+                    readiness_policy="evaluation",
+                )
+                training = export_jsonl_dataset(
+                    repository,
+                    Path(self.temp.name) / f"matrix-{status}-training.jsonl",
+                    runtime_version="526e72f",
+                    horizon_minutes=60,
+                    readiness_policy="training",
+                )
+                self.assertTrue(assessment.technically_ready)
+                self.assertIs(
+                    assessment.approved_for_evaluation,
+                    evaluation_allowed,
+                )
+                self.assertIs(
+                    assessment.approved_for_training,
+                    training_allowed,
+                )
+                self.assertEqual(
+                    evaluation["case_count"], int(evaluation_allowed)
+                )
+                self.assertEqual(
+                    training["case_count"], int(training_allowed)
+                )
+                if reason is not None:
+                    self.assertEqual(
+                        evaluation["exclusions_by_reason"], {reason: 1}
+                    )
+                    self.assertEqual(
+                        training["exclusions_by_reason"], {reason: 1}
+                    )
+
+    def test_review_allowlist_never_overrides_invalid_technical_state(
+        self,
+    ) -> None:
+        for status in ("approved", "not_required"):
+            with self.subTest(status=status):
+                path = Path(self.temp.name) / f"invalid-{status}.sqlite3"
+                repository = SQLiteLearningCaseRepository(path)
+                repository.initialize()
+                case = LearningCasePersistenceService(repository).persist(
+                    completed_event(),
+                    ingestion_timestamp=NOW,
+                    provenance={
+                        "source": "technical_gate",
+                        "runtime_version": "526e72f",
+                    },
+                )
+                repository.record_review(
+                    ReviewRecord(
+                        review_id=f"review:{status}",
+                        case_id=case.case_id,
+                        review_status=status,
+                        annotation=None,
+                        tags=(),
+                        reviewed_by="policy-reviewer",
+                        reviewed_at=NOW + timedelta(hours=2),
+                    )
+                )
+                assessment = LearningReadinessService(repository).assess(
+                    case.case_id
+                )
+                self.assertFalse(assessment.technically_ready)
+                self.assertFalse(assessment.approved_for_evaluation)
+                self.assertFalse(assessment.approved_for_training)
+
+    def test_pending_and_rejected_stale_and_forged_approval_are_blocked(
+        self,
+    ) -> None:
+        for status in ("pending", "rejected"):
+            with self.subTest(status=status):
+                path = Path(self.temp.name) / f"transition-{status}.sqlite3"
+                repository = SQLiteLearningCaseRepository(path)
+                repository.initialize()
+                case = LearningCasePersistenceService(repository).persist(
+                    completed_event(),
+                    ingestion_timestamp=NOW,
+                    provenance={
+                        "source": "governance_transition",
+                        "runtime_version": "526e72f",
+                    },
+                )
+                OutcomeAttributionService(repository).attribute(
+                    case,
+                    future_observations(),
+                    horizon_minutes=60,
+                    creation_timestamp=NOW + timedelta(minutes=60),
+                )
+                repository.record_review(
+                    ReviewRecord(
+                        review_id="review:approved",
+                        case_id=case.case_id,
+                        review_status="approved",
+                        annotation=None,
+                        tags=(),
+                        reviewed_by="policy-reviewer",
+                        reviewed_at=NOW + timedelta(hours=1),
+                    )
+                )
+                approved = LearningReadinessService(repository).assess(
+                    case.case_id
+                )
+                repository.record_review(
+                    ReviewRecord(
+                        review_id=f"review:{status}",
+                        case_id=case.case_id,
+                        review_status=status,
+                        annotation=None,
+                        tags=(),
+                        reviewed_by="policy-reviewer",
+                        reviewed_at=NOW + timedelta(hours=2),
+                    )
+                )
+                stale = export_jsonl_dataset(
+                    repository,
+                    Path(self.temp.name) / f"stale-{status}.jsonl",
+                    runtime_version="526e72f",
+                    horizon_minutes=60,
+                )
+                current = LearningReadinessService(repository).assess(
+                    case.case_id
+                )
+                self.assertEqual(stale["case_count"], 0)
+                self.assertEqual(
+                    stale["exclusions_by_reason"],
+                    {"forged_readiness_assessment": 1},
+                )
+                self.assertNotEqual(
+                    approved.provenance["dependency_fingerprint"],
+                    current.provenance["dependency_fingerprint"],
+                )
+                self.assertFalse(current.approved_for_evaluation)
+                self.assertFalse(current.approved_for_training)
+                forged_values = {
+                    field.name: getattr(current, field.name)
+                    for field in fields(current)
+                }
+                forged_values.update(
+                    approved_for_evaluation=True,
+                    approved_for_training=True,
                 )
                 forged = type(current)(**forged_values)
                 with self.assertRaises(LearningCaseConflictError):
@@ -804,21 +1007,90 @@ class LearningReadinessTests(TestCase):
             ),
             0,
         )
-        self.assertEqual(
-            cli_main(
-                [
-                    "--store",
-                    store,
-                    "export",
-                    "--output",
-                    str(Path(self.temp.name) / "cli-dataset.jsonl"),
-                    "--runtime-version",
-                    "526e72f",
-                    "--policy",
-                    "evaluation",
-                    "--horizon",
-                    "60",
-                ]
-            ),
-            0,
-        )
+
+    def test_cli_pending_and_rejected_block_both_export_policies(
+        self,
+    ) -> None:
+        for status in ("pending", "rejected"):
+            with self.subTest(status=status):
+                path = Path(self.temp.name) / f"cli-{status}.sqlite3"
+                repository = SQLiteLearningCaseRepository(path)
+                repository.initialize()
+                case = LearningCasePersistenceService(repository).persist(
+                    completed_event(),
+                    ingestion_timestamp=NOW,
+                    provenance={
+                        "source": "cli_policy",
+                        "runtime_version": "526e72f",
+                    },
+                )
+                OutcomeAttributionService(repository).attribute(
+                    case,
+                    future_observations(),
+                    horizon_minutes=60,
+                    creation_timestamp=NOW + timedelta(minutes=60),
+                )
+                store = str(path)
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "--store",
+                            store,
+                            "review-case",
+                            "--case-id",
+                            case.case_id,
+                            "--status",
+                            status,
+                            "--reviewed-by",
+                            "cli-policy-reviewer",
+                            "--reviewed-at",
+                            (NOW + timedelta(hours=2)).isoformat(),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "--store",
+                            store,
+                            "assess-readiness",
+                            "--case-id",
+                            case.case_id,
+                        ]
+                    ),
+                    0,
+                )
+                for policy in ("evaluation", "training"):
+                    output = (
+                        Path(self.temp.name)
+                        / f"cli-{status}-{policy}.jsonl"
+                    )
+                    self.assertEqual(
+                        cli_main(
+                            [
+                                "--store",
+                                store,
+                                "export",
+                                "--output",
+                                str(output),
+                                "--runtime-version",
+                                "526e72f",
+                                "--policy",
+                                policy,
+                                "--horizon",
+                                "60",
+                            ]
+                        ),
+                        0,
+                    )
+                    manifest = json.loads(
+                        output.with_suffix(
+                            output.suffix + ".manifest.json"
+                        ).read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(manifest["case_count"], 0)
+                    self.assertEqual(
+                        manifest["exclusions_by_reason"],
+                        {"review_not_approved": 1},
+                    )

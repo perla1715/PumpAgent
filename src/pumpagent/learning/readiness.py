@@ -39,8 +39,8 @@ class ReadinessPolicy:
 
 EVALUATION_POLICY = ReadinessPolicy(
     name="evaluation",
-    require_human_approval=False,
-    allowed_review_statuses=frozenset(),
+    require_human_approval=True,
+    allowed_review_statuses=frozenset({"approved", "not_required"}),
 )
 TRAINING_POLICY = ReadinessPolicy(
     name="training",
@@ -51,6 +51,24 @@ READINESS_POLICIES = {
     EVALUATION_POLICY.name: EVALUATION_POLICY,
     TRAINING_POLICY.name: TRAINING_POLICY,
 }
+
+
+def _is_policy_authorized(
+    *,
+    technically_ready: bool,
+    review_status: str,
+    manually_excluded: bool,
+    administratively_blocked: bool,
+    policy: ReadinessPolicy,
+) -> bool:
+    return (
+        technically_ready
+        and review_status in policy.allowed_review_statuses
+        and not manually_excluded
+        and not administratively_blocked
+    )
+
+
 SUPPORTED_READINESS_VALIDATORS = frozenset({READINESS_VALIDATOR_VERSION})
 ACTIVE_READINESS_VALIDATOR = READINESS_VALIDATOR_VERSION
 SUPPORTED_RUNTIME_VERSIONS = frozenset(
@@ -269,14 +287,19 @@ class LearningReadinessService:
         else:
             status = LearningReadinessStatus.LEARNING_READY
         technically_ready = status is LearningReadinessStatus.LEARNING_READY
-        approved_for_evaluation = (
-            technically_ready
-            and not manually_excluded
-            and not administratively_blocked
+        approved_for_evaluation = _is_policy_authorized(
+            technically_ready=technically_ready,
+            review_status=review_status,
+            manually_excluded=manually_excluded,
+            administratively_blocked=administratively_blocked,
+            policy=EVALUATION_POLICY,
         )
-        approved_for_training = (
-            approved_for_evaluation
-            and review_status in TRAINING_POLICY.allowed_review_statuses
+        approved_for_training = _is_policy_authorized(
+            technically_ready=technically_ready,
+            review_status=review_status,
+            manually_excluded=manually_excluded,
+            administratively_blocked=administratively_blocked,
+            policy=TRAINING_POLICY,
         )
         outcome_id = outcome.outcome_id if outcome else None
         assessment_timestamp = max(
