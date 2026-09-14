@@ -1,0 +1,268 @@
+[
+  {
+    "schema_version": "pilot_recorded_snapshot_v1",
+    "run_id": "offline-demo-001",
+    "event_id": "recorded-event-1",
+    "symbol": "DEMOUSDT",
+    "provider": "synthetic_fixture",
+    "market_id": "synthetic_linear",
+    "contract_id": "DEMOUSDT-PERP",
+    "source_evidence": {
+      "id": "synthetic-evidence-1",
+      "sha256": "065e760f9f49a51631373e0d7bcc4dd42109d0fb9a4e3822661486884cf26ab1"
+    },
+    "timeframe": "1m",
+    "candle_open_time": "2026-09-13T12:00:00Z",
+    "candle_close_time": "2026-09-13T12:01:00Z",
+    "provider_event_time": {
+      "status": "UNAVAILABLE",
+      "reason": "Synthetic fixture has no provider event clock."
+    },
+    "received_time": "2026-09-13T12:01:01Z",
+    "recorded_time": "2026-09-13T12:01:02Z",
+    "normalized_values": {
+      "price": {
+        "status": "AVAILABLE",
+        "value": 100,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "price",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "volume": {
+        "status": "AVAILABLE",
+        "value": 10,
+        "unit": "base_asset",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "volume",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "open": {
+        "status": "AVAILABLE",
+        "value": 99,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "open",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "high": {
+        "status": "AVAILABLE",
+        "value": 101,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "high",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "low": {
+        "status": "AVAILABLE",
+        "value": 98,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "low",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "close": {
+        "status": "AVAILABLE",
+        "value": 100,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-1",
+          "source_field": "close",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "open_interest": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "oi_change_pct": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "cvd": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "funding_rate": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "liquidations": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      }
+    },
+    "quality": {
+      "status": "good",
+      "missing_metrics": [
+        "open_interest",
+        "oi_change_pct",
+        "cvd",
+        "funding_rate",
+        "liquidations"
+      ],
+      "reasons": [],
+      "warnings": []
+    },
+    "previous_checkpoint_id": null,
+    "assessments": {
+      "geometry_state": "UNASSESSED",
+      "counter_thesis_state": "UNASSESSED",
+      "alert_state": "UNASSESSED"
+    },
+    "versions": {
+      "code": "pilot_recorder_v1",
+      "config": "offline_fixture_v1",
+      "schema": "pilot_checkpoint_record_v1"
+    }
+  },
+  {
+    "schema_version": "pilot_recorded_snapshot_v1",
+    "run_id": "offline-demo-001",
+    "event_id": "recorded-event-2",
+    "symbol": "DEMOUSDT",
+    "provider": "synthetic_fixture",
+    "market_id": "synthetic_linear",
+    "contract_id": "DEMOUSDT-PERP",
+    "source_evidence": {
+      "id": "synthetic-evidence-2",
+      "sha256": "646b37da99188605fdfcdd8bc8aff2e0b3943f35ccc057dc6717a0b4c96ddf5a"
+    },
+    "timeframe": "1m",
+    "candle_open_time": "2026-09-13T12:01:00Z",
+    "candle_close_time": "2026-09-13T12:02:00Z",
+    "provider_event_time": {
+      "status": "UNAVAILABLE",
+      "reason": "Synthetic fixture has no provider event clock."
+    },
+    "received_time": "2026-09-13T12:02:01Z",
+    "recorded_time": "2026-09-13T12:02:02Z",
+    "normalized_values": {
+      "price": {
+        "status": "AVAILABLE",
+        "value": 101,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "price",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "volume": {
+        "status": "AVAILABLE",
+        "value": 11,
+        "unit": "base_asset",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "volume",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "open": {
+        "status": "AVAILABLE",
+        "value": 100,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "open",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "high": {
+        "status": "AVAILABLE",
+        "value": 102,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "high",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "low": {
+        "status": "AVAILABLE",
+        "value": 99,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "low",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "close": {
+        "status": "AVAILABLE",
+        "value": 101,
+        "unit": "quote_per_base",
+        "provenance": {
+          "source_evidence_id": "synthetic-evidence-2",
+          "source_field": "close",
+          "kind": "OBSERVED",
+          "derivation_version": "literal_normalization_v1"
+        }
+      },
+      "open_interest": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "oi_change_pct": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "cvd": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "funding_rate": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      },
+      "liquidations": {
+        "status": "UNAVAILABLE",
+        "reason": "Not supplied in this synthetic offline recording."
+      }
+    },
+    "quality": {
+      "status": "good",
+      "missing_metrics": [
+        "open_interest",
+        "oi_change_pct",
+        "cvd",
+        "funding_rate",
+        "liquidations"
+      ],
+      "reasons": [],
+      "warnings": []
+    },
+    "previous_checkpoint_id": "pc1:e65d2694f458b10a785433fd9aa9f100aab5bde0bb6d94fa1b763e8c55258598",
+    "assessments": {
+      "geometry_state": "UNASSESSED",
+      "counter_thesis_state": "UNASSESSED",
+      "alert_state": "UNASSESSED"
+    },
+    "versions": {
+      "code": "pilot_recorder_v1",
+      "config": "offline_fixture_v1",
+      "schema": "pilot_checkpoint_record_v1"
+    }
+  }
+]
