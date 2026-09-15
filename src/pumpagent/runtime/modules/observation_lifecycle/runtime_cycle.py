@@ -46,6 +46,7 @@ class ObservationRuntimeCycleStatus(str, Enum):
     INELIGIBLE = "INELIGIBLE"
     ADMISSION_STOPPED = "ADMISSION_STOPPED"
     RUNTIME_FAILED = "RUNTIME_FAILED"
+    RUNTIME_REJECTED = "RUNTIME_REJECTED"
     COMPLETION_REJECTED = "COMPLETION_REJECTED"
     INVALID_CONTEXT = "INVALID_CONTEXT"
 
@@ -110,6 +111,19 @@ class ObservationRuntimeCycleResult(SerializableMixin):
                 raise ValueError("COMPLETED requires Runtime and a Watchlist change.")
             if self.eligibility_result is not None:
                 raise ValueError("COMPLETED cannot contain an eligibility rejection.")
+        elif self.status is ObservationRuntimeCycleStatus.RUNTIME_REJECTED:
+            if (
+                not self.runtime_invoked
+                or self.runtime_result is None
+                or self.runtime_result.runtime_status is not RuntimeStatus.REJECTED
+                or self.eligibility_result is not None
+                or self.cycle_completion_result is not None
+                or self.watchlist_changed
+            ):
+                raise ValueError(
+                    "RUNTIME_REJECTED requires a canonical rejection without "
+                    "eligibility, completion, or Watchlist changes."
+                )
         elif self.status is ObservationRuntimeCycleStatus.INELIGIBLE:
             if (
                 not self.runtime_invoked
@@ -202,7 +216,9 @@ def process_observation_runtime_cycle(
             previous_scenario_probability=(
                 previous.previous_scenario_probability
             ),
-            classification_timestamp=value.closed_candle_timestamp,
+            # Candle time identifies admission/continuity; snapshot time owns
+            # the analytical cycle. Preserve both provenance timestamps.
+            classification_timestamp=value.snapshot.timestamp,
         )
     except Exception as exc:  # Runtime is an integration boundary; technical failure is data.
         return _result(value, ObservationRuntimeCycleStatus.RUNTIME_FAILED,
@@ -219,10 +235,14 @@ def process_observation_runtime_cycle(
             runtime_invoked=True,
         )
     if runtime_result.runtime_status is RuntimeStatus.REJECTED:
+        runtime.rollback_runtime_continuity(runtime_result.event_id)
         eligibility_result = runtime_result.compatibility_context.get(
             "eligibility_result"
         )
-        if isinstance(eligibility_result, MarketEligibilityResult):
+        if (
+            isinstance(eligibility_result, MarketEligibilityResult)
+            and not eligibility_result.eligible
+        ):
             return _result(
                 value,
                 ObservationRuntimeCycleStatus.INELIGIBLE,
@@ -235,7 +255,7 @@ def process_observation_runtime_cycle(
             )
         return _result(
             value,
-            ObservationRuntimeCycleStatus.INELIGIBLE,
+            ObservationRuntimeCycleStatus.RUNTIME_REJECTED,
             runtime_result.errors_or_warnings[0],
             admission=admission,
             entry=entry,

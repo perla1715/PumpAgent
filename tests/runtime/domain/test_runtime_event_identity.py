@@ -4,6 +4,7 @@ import copy
 from dataclasses import replace
 from unittest import TestCase
 
+from pumpagent.runtime.domain.enums import RuntimeStatus
 from pumpagent.runtime.orchestrator import (
     RuntimeOrchestrator,
     serialize_runtime_event,
@@ -26,6 +27,19 @@ class RuntimeEventIdentityTests(TestCase):
         self.event = RuntimeOrchestrator().process_market_update(
             make_snapshot(), episode_id=TEST_EPISODE_ID
         )
+
+    def test_finalized_alias_and_legacy_value_use_completed_semantics(self) -> None:
+        self.assertIs(RuntimeStatus.FINALIZED, RuntimeStatus.COMPLETED)
+        self.assertIs(RuntimeStatus("finalized"), RuntimeStatus.COMPLETED)
+        self.assertEqual(RuntimeStatus.FINALIZED.value, "completed")
+        self.assertNotIn("finalized", tuple(status.value for status in RuntimeStatus))
+        event = replace(self.event, runtime_status=RuntimeStatus.FINALIZED)
+        self.assertEqual(
+            serialize_runtime_event(event)["runtime_event"]["runtime_status"],
+            "completed",
+        )
+        with self.assertRaisesRegex(ValueError, "missing canonical sections"):
+            replace(event, scenario_probability=None)
 
     def test_each_canonical_identity_boundary_is_authenticated(self) -> None:
         event = self.event

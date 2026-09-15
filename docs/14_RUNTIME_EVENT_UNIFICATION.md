@@ -21,8 +21,9 @@ Terminal lifecycle states are explicit:
 - `FAILED` records a technical or contract failure and contains no downstream
   decision.
 
-`COMPLETED` is the only terminal-success status. The legacy `FINALIZED` value
-is retired rather than retained as a second success meaning.
+`COMPLETED` is the only terminal-success status. The deprecated `FINALIZED`
+reference aliases `COMPLETED`; parsing the legacy `"finalized"` value maps to
+`COMPLETED`, and serialization emits `"completed"`. No second success state exists.
 
 Only a completed event may advance Episode analytical continuity.
 
@@ -35,6 +36,9 @@ Scenario, Decision, and Healthy Baseline provenance must precede the current
 cycle where their domain contracts require history. The public compatibility
 parameter `classification_timestamp` is accepted only when it equals the
 admitted snapshot timestamp; omission derives it from the snapshot.
+Observation Lifecycle retains the closed-candle timestamp for admission and
+continuity, while passing the snapshot observation timestamp for analytical
+classification. A delayed snapshot does not overwrite either provenance time.
 
 ## Compatibility projection
 
@@ -68,7 +72,17 @@ reinterpret a canonical analytical output.
 Observation Lifecycle commits completed RuntimeEvents and preserves prior
 context for rejected or failed events. Learning Memory consumes completed
 RuntimeEvents and uses DecisionAssessment as the terminal decision authority.
-DecisionAlert is not the canonical Runtime result.
+DecisionAlert is not the canonical Runtime result. A generic canonical rejection
+maps to lifecycle `RUNTIME_REJECTED`; `INELIGIBLE` requires an actual negative
+MarketEligibilityResult. Neither rejection commits Episode continuity.
+
+Learning Memory also preserves the frozen-base missing-ScenarioProbability
+`REVIEW_ONLY` path: a legacy `CREATED` RuntimeEvent must contain MarketSnapshot,
+StructuralEvidence, MarketEfficiencyEvidence, HypothesisPackage, AgentState,
+ConfidenceAssessment and DecisionAlert with their historical identity checks.
+ObservationPackage is optional on that review-only path and validated when
+present. It remains incomplete, is not promoted to `COMPLETED`, and produces
+`should_store=False`. Canonical completed-event completeness is unchanged.
 
 ## Invariants
 

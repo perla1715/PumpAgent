@@ -9,7 +9,7 @@ import pumpagent.runtime.modules.scenario_probability as scenario_probability_mo
 import pumpagent.runtime.modules.decision as decision_module
 import pumpagent.runtime.modules.confidence as confidence_module
 
-from pumpagent.runtime.domain import HypothesisLifecycleStatus, MarketSnapshot
+from pumpagent.runtime.domain import HypothesisLifecycleStatus, MarketSnapshot, RuntimeEvent
 from pumpagent.runtime.domain.decision import DecisionReasonCode, DecisionType
 from pumpagent.runtime.domain.enums import (
     AgentStateType,
@@ -30,6 +30,7 @@ from pumpagent.runtime.modules.market_eligibility import (
     MarketEligibilityConfig,
     MarketEligibilityFilter,
     MarketEligibilityReason,
+    MarketEligibilityResult,
 )
 from pumpagent.runtime.modules.watchlist import WatchlistEntry, WatchlistManager
 from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
@@ -117,6 +118,102 @@ class CountingRuntime(RuntimeOrchestrator):
 
 
 class ObservationRuntimeCycleTests(TestCase):
+    def test_admitted_delayed_snapshots_preserve_both_timestamps_and_commit(self) -> None:
+        manager = manager_with(active_entry())
+        runtime = CountingRuntime()
+        for index, delay in enumerate((30, 45), start=1):
+            candle = CANDLE + timedelta(minutes=5 * (index - 1))
+            observation_time = candle + timedelta(seconds=delay)
+            value = replace(process_snapshot(candle), timestamp=observation_time)
+            result = process_observation_runtime_cycle(
+                cycle(value, candle=candle), manager, runtime
+            )
+            self.assertTrue(result.admission_result.admitted)
+            self.assertIs(result.status, ObservationRuntimeCycleStatus.COMPLETED)
+            self.assertEqual(runtime.calls, index)
+            event = result.runtime_result
+            self.assertIs(event.runtime_status, RuntimeStatus.COMPLETED)
+            self.assertIs(event.market_snapshot, value)
+            self.assertEqual(event.market_snapshot.ohlcv[-1]["timestamp"], candle)
+            for timestamp in (
+                event.cycle_timestamp,
+                event.observation_package.observation_timestamp,
+                event.process_evidence.observation_timestamp,
+                event.process_quality_assessment.current_observation.observation_timestamp,
+                event.scenario_probability.observation_timestamp,
+                event.scenario_probability.created_at,
+                event.decision_assessment.created_at,
+            ):
+                self.assertEqual(timestamp, observation_time)
+            event.validate()
+            entry = result.resulting_watchlist_entry
+            context = entry.active_episode_analytical_context
+            self.assertEqual(entry.observation_count, index)
+            self.assertEqual(entry.latest_accepted_closed_candle_timestamp, candle)
+            self.assertEqual(context.latest_completed_closed_candle_timestamp, candle)
+            self.assertEqual(context.latest_process_observation_timestamp, observation_time)
+            self.assertEqual(context.completed_analytical_cycle_count, index)
+            self.assertEqual(len(context.process_quality_history), index)
+            self.assertEqual(result.previous_process_evidence_used, index > 1)
+            self.assertEqual(runtime._pending_continuity, {})
+        before = manager.list_active()
+        duplicate = process_observation_runtime_cycle(
+            cycle(replace(value, timestamp=observation_time + timedelta(seconds=1)),
+                  candle=candle),
+            manager, runtime,
+        )
+        self.assertIs(duplicate.status, ObservationRuntimeCycleStatus.ADMISSION_STOPPED)
+        self.assertFalse(duplicate.runtime_invoked)
+        self.assertEqual(runtime.calls, 2)
+        self.assertEqual(manager.list_active(), before)
+
+    def test_generic_runtime_rejection_is_explicit_and_preserves_continuity(self) -> None:
+        manager = manager_with(active_entry())
+        runtime = CountingRuntime()
+        first = process_observation_runtime_cycle(cycle(snapshot()), manager, runtime)
+        self.assertIs(first.status, ObservationRuntimeCycleStatus.COMPLETED)
+        before = manager.list_active()
+        helpers_before = runtime._snapshot_continuity()
+        value = snapshot(CANDLE + timedelta(minutes=5))
+        rejected = RuntimeEvent(
+            event_id="generic-rejected-event", schema_version="runtime_event_v2",
+            cycle_timestamp=value.timestamp, symbol=value.symbol,
+            exchange=value.exchange, timeframe=value.timeframe,
+            episode_id=first.episode_id, runtime_status=RuntimeStatus.REJECTED,
+            market_snapshot=value, errors_or_warnings=("intentional rejection",),
+        )
+        # An affirmative eligibility result is not an eligibility rejection.
+        for context in ({}, {"eligibility_result": MarketEligibilityResult(
+            True, MarketEligibilityReason.OK
+        )}):
+            event = replace(rejected, compatibility_context=context)
+            with self.subTest(context=context), mock.patch.object(
+                runtime, "process_market_update", return_value=event
+            ) as process:
+                results = [
+                    process_observation_runtime_cycle(cycle(value), manager, runtime)
+                    for _ in range(2)
+                ]
+            self.assertEqual(process.call_count, 2)
+            self.assertEqual(results[0].to_dict(), results[1].to_dict())
+            result = results[0]
+            self.assertIs(result.status, ObservationRuntimeCycleStatus.RUNTIME_REJECTED)
+            self.assertIs(result.runtime_result, event)
+            self.assertTrue(result.runtime_invoked)
+            self.assertIsNone(result.eligibility_result)
+            self.assertIsNone(result.cycle_completion_result)
+            self.assertFalse(result.watchlist_changed)
+            self.assertEqual(result.orchestration_reason, "intentional rejection")
+            self.assertEqual(manager.list_active(), before)
+            self.assertEqual(runtime._snapshot_continuity(), helpers_before)
+            for name in (
+                "observation_package", "structural_evidence", "market_efficiency_evidence",
+                "process_evidence", "process_quality_assessment", "hypothesis_package",
+                "agent_state", "scenario_probability", "confidence_assessment",
+                "decision_assessment",
+            ):
+                self.assertIsNone(getattr(result.runtime_result, name))
+
     def test_changed_interpretation_replaces_canonical_hypothesis(self) -> None:
         generated = iter(("opaque-hypothesis-1", "opaque-hypothesis-2"))
         manager = manager_with(active_entry())

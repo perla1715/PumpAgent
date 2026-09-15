@@ -39,6 +39,18 @@ REQUIRED_EXPORT_EVENT_SECTIONS = (
     "decision_assessment",
 )
 
+# The frozen-base REVIEW_ONLY input used a CREATED RuntimeEvent with these
+# legacy sections and no Scenario Probability. It was not a completed cycle.
+_LEGACY_REVIEW_ONLY_SECTIONS = (
+    "market_snapshot",
+    "structural_evidence",
+    "market_efficiency_evidence",
+    "hypothesis_package",
+    "agent_state",
+    "confidence_assessment",
+    "decision_alert",
+)
+
 RUNTIME_OWNED_EVENT_ID_SECTIONS = (
     "structural_evidence",
     "market_efficiency_evidence",
@@ -96,6 +108,11 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
         raise LearningMemoryError(
             "RuntimeEvent.learning_metadata must be absent before export."
         )
+    if (
+        event.runtime_status is RuntimeStatus.CREATED
+        and event.scenario_probability is None
+    ):
+        return _classify_legacy_review_only(event)
     if event.runtime_status is not RuntimeStatus.COMPLETED:
         raise LearningMemoryError(
             "Learning Memory requires a completed canonical RuntimeEvent."
@@ -115,6 +132,22 @@ def classify_runtime_event(event: RuntimeEvent) -> LearningMemoryExportCategory:
     _validate_section_event_id(event, "scenario_probability")
     _validate_scenario_source_identity(event)
     return LearningMemoryExportCategory.CASE_READY
+
+
+def _classify_legacy_review_only(event: RuntimeEvent) -> LearningMemoryExportCategory:
+    """Preserve the tested pre-F-02 review path without completing analysis."""
+
+    for section in _LEGACY_REVIEW_ONLY_SECTIONS:
+        if getattr(event, section) is None:
+            raise LearningMemoryError(f"RuntimeEvent.{section} is required.")
+
+    _validate_market_snapshot_identity(event)
+    for section in _LEGACY_REVIEW_ONLY_SECTIONS[1:]:
+        _validate_section_event_id(event, section)
+    _validate_confidence_source_identity(event)
+    if event.observation_package is not None:
+        _validate_section_event_id(event, "observation_package")
+    return LearningMemoryExportCategory.REVIEW_ONLY
 
 
 def _validate_market_snapshot_identity(event: RuntimeEvent) -> None:

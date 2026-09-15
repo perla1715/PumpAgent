@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pumpagent.runtime.domain import HypothesisLifecycleStatus, LearningMetadata, RuntimeEvent
-from pumpagent.runtime.domain.enums import ProcessDirection, ReviewStatus
+from pumpagent.runtime.domain.enums import ProcessDirection, ReviewStatus, RuntimeStatus
 from pumpagent.runtime.modules.agent_state import add_agent_state
 from pumpagent.runtime.modules.confidence import add_confidence_assessment
 from pumpagent.runtime.modules.decision_alert import add_decision_alert
@@ -87,6 +87,28 @@ def add_canonical_scenario_probability(event: RuntimeEvent) -> RuntimeEvent:
         event,
         process_evidence=make_process_evidence(event_id=event.event_id),
         process_quality_assessment=make_process_quality(event_id=event.event_id),
+    )
+
+
+def make_legacy_review_only_event() -> RuntimeEvent:
+    # Copy supplied sections from the canonical production path. Do not
+    # resurrect the fixture-owned analytical graph or synthesize conclusions.
+    source = make_event_with_decision_alert()
+    return RuntimeEvent(
+        event_id=source.event_id,
+        schema_version="1.0",
+        cycle_timestamp=source.cycle_timestamp,
+        symbol=source.symbol,
+        exchange=source.exchange,
+        timeframe=source.timeframe,
+        market_snapshot=source.market_snapshot,
+        observation_package=source.observation_package,
+        structural_evidence=source.structural_evidence,
+        market_efficiency_evidence=source.market_efficiency_evidence,
+        hypothesis_package=source.hypothesis_package,
+        agent_state=source.agent_state,
+        confidence_assessment=source.confidence_assessment,
+        decision_alert=source.decision_alert,
     )
 
 
@@ -193,7 +215,7 @@ class LearningMemoryEngineTests(unittest.TestCase):
         self.assertIsNone(metadata.outcome_summary)
         self.assertIsNone(metadata.human_annotation)
 
-    def test_missing_observation_package_remains_case_ready(self) -> None:
+    def test_completed_event_requires_observation_package(self) -> None:
         with self.assertRaisesRegex(ValueError, "observation_package"):
             make_event_with_decision_alert().with_sections(
                 observation_package=None
@@ -247,10 +269,78 @@ class LearningMemoryEngineTests(unittest.TestCase):
                     event.with_sections(confidence_assessment=confidence)
 
     def test_missing_scenario_probability_is_review_only(self) -> None:
+        source = make_legacy_review_only_event()
+        for observation in (source.observation_package, None):
+            with self.subTest(observation_present=observation is not None):
+                event = replace(source, observation_package=observation)
+                before = event.to_dict()
+                metadata = build_learning_metadata(event, created_at=NOW)
+                self.assertIs(event.runtime_status, RuntimeStatus.CREATED)
+                self.assertIs(
+                    classify_runtime_event(event),
+                    LearningMemoryExportCategory.REVIEW_ONLY,
+                )
+                self.assertFalse(metadata.should_store)
+                self.assertIs(metadata.review_status, ReviewStatus.PENDING)
+                self.assertTrue(metadata.outcome_pending)
+                self.assertIn("Scenario Probability is missing", metadata.storage_reason)
+                self.assertEqual(event.to_dict(), before)
+                updated = add_learning_metadata(event)
+                self.assertIs(updated.runtime_status, RuntimeStatus.CREATED)
+                self.assertIsNone(updated.scenario_probability)
+                self.assertIsNone(updated.process_evidence)
+                self.assertIsNone(updated.process_quality_assessment)
+                self.assertIsNone(updated.decision_assessment)
+                self.assertFalse(updated.learning_metadata.should_store)
+                serialized = updated.to_dict()
+                serialized.pop("learning_metadata")
+                expected = dict(before)
+                expected.pop("learning_metadata")
+                self.assertEqual(serialized, expected)
+                with self.assertRaisesRegex(LearningMemoryError, "must be absent"):
+                    add_learning_metadata(updated)
+
+    def test_completed_event_requires_scenario_probability(self) -> None:
         with self.assertRaisesRegex(ValueError, "scenario_probability"):
             make_event_with_decision_alert().with_sections(
                 scenario_probability=None
             )
+
+    def test_review_only_preserves_legacy_required_sections_and_identity(self) -> None:
+        event = make_legacy_review_only_event()
+        required = (
+            "market_snapshot", "structural_evidence", "market_efficiency_evidence",
+            "hypothesis_package", "agent_state", "confidence_assessment",
+            "decision_alert",
+        )
+        for section in required:
+            with self.subTest(missing=section):
+                with self.assertRaisesRegex(LearningMemoryError, section):
+                    build_learning_metadata(replace(event, **{section: None}))
+        mismatches = (
+            ("market_snapshot", replace(event.market_snapshot, symbol="ETHUSDT")),
+            ("observation_package", replace(event.observation_package, event_id="other")),
+            ("agent_state", replace(event.agent_state, event_id="other")),
+            ("decision_alert", replace(event.decision_alert, event_id="other")),
+            ("confidence_assessment", replace(
+                event.confidence_assessment, source_hypothesis_id="other"
+            )),
+        )
+        for section, value in mismatches:
+            with self.subTest(mismatched=section), self.assertRaises(LearningMemoryError):
+                build_learning_metadata(replace(event, **{section: value}))
+
+    def test_review_only_does_not_admit_failed_rejected_or_in_progress_events(self) -> None:
+        event = make_legacy_review_only_event()
+        for status in (RuntimeStatus.FAILED, RuntimeStatus.REJECTED, RuntimeStatus.IN_PROGRESS):
+            with self.subTest(status=status):
+                incompatible = replace(
+                    event, runtime_status=status, errors_or_warnings=("not completed",)
+                )
+                with self.assertRaisesRegex(LearningMemoryError, "completed"):
+                    build_learning_metadata(incompatible)
+        with self.assertRaisesRegex(ValueError, "missing canonical sections"):
+            replace(event, runtime_status=RuntimeStatus.FINALIZED)
 
     def test_learning_memory_writes_only_learning_metadata(self) -> None:
         event = make_event_with_decision_alert()

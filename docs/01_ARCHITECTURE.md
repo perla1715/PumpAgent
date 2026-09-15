@@ -214,8 +214,9 @@ completed RuntimeEvent
 analytical orchestration path. It returns canonical `RuntimeEvent` outcomes:
 `COMPLETED`, `REJECTED`, or `FAILED`.
 
-`COMPLETED` is the only terminal-success Runtime status. The legacy
-`FINALIZED` status is retired and is not a public success alias.
+`COMPLETED` is the only terminal-success Runtime status. The deprecated
+`FINALIZED` reference aliases `COMPLETED`; the legacy `"finalized"` value maps
+to it on parsing, while serialization emits `"completed"`.
 
 ## Agent Runtime Loop MVP
 
@@ -907,13 +908,19 @@ Learning Memory is not part of the current Runtime Orchestrator path.
 
 It remains a separate boundary for future storage and Research Plane workflows.
 
-When explicitly invoked, it classifies a completed `RuntimeEvent` as
-`CASE_READY` or `REVIEW_ONLY`; invalid or inconsistent events are rejected.
-`ObservationPackage` is optional because the RuntimeEvent contract path already
-contains `MarketSnapshot`, `StructuralEvidence`, and
-`MarketEfficiencyEvidence`. A missing Scenario Probability produces a
-`REVIEW_ONLY` case rather than rejection when Confidence and Decision / Alert
-are present.
+When explicitly invoked, it classifies a valid completed canonical
+`RuntimeEvent` as `CASE_READY`, using `DecisionAssessment` as the terminal
+authority. Canonical completion requires all analytical sections, including
+ObservationPackage and ScenarioProbability.
+
+The frozen-base missing-ScenarioProbability compatibility case remains
+`REVIEW_ONLY`: a legacy `CREATED` RuntimeEvent must contain MarketSnapshot,
+StructuralEvidence, MarketEfficiencyEvidence, HypothesisPackage, AgentState,
+ConfidenceAssessment and DecisionAlert with valid historical identities.
+ObservationPackage is optional only on this review-only path and validated
+when present. No analysis is recomputed and no incomplete event is promoted
+to completed status. Failed, rejected and in-progress events do not enter
+this compatibility path.
 
 `LearningMetadata.should_store` means only that a complete case is eligible for
 future storage after human review. It does not persist the case. Review-only

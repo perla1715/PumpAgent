@@ -16,8 +16,16 @@ class RuntimeStatus(str, Enum):
     CREATED = "created"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    FINALIZED = COMPLETED  # Deprecated public alias; one terminal-success state.
     REJECTED = "rejected"
     FAILED = "failed"
+
+    @classmethod
+    def _missing_(cls, value: object) -> RuntimeStatus | None:
+        # Read legacy serialized status without emitting a second wire value.
+        if value == "finalized":
+            return cls.COMPLETED
+        return None
 
 
 class ObservationEpisodeStatus(str, Enum):
