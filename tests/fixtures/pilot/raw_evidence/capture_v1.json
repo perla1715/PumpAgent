@@ -1,0 +1,22 @@
+{
+  "archive_schema_version": "coinalyze-raw-evidence/v1",
+  "provider": "coinalyze",
+  "provider_api_version_or_unavailable_reason": {"value": "v1", "unavailable_reason": null},
+  "endpoint_identity": "/v1/ohlcv-history",
+  "http_method": "GET",
+  "request_parameters": {"symbols": "BTCUSDT_PERP.A", "interval": "1min", "from": 1789430400, "to": 1789430760},
+  "request_started_at": "2026-09-15T00:10:00Z",
+  "response_received_at": "2026-09-15T00:10:02Z",
+  "recorded_at": "2026-09-15T00:10:03Z",
+  "market_identity": "crypto",
+  "exchange_identity": "binance",
+  "contract_identity": "perpetual",
+  "requested_symbol": "BTCUSDT_PERP.A",
+  "requested_interval": "1min",
+  "http_status_or_transport_error": {"http_status": 200, "transport_error": null},
+  "content_type_or_unavailable_reason": {"value": "application/json", "unavailable_reason": null},
+  "capture_code_version": "fixture-v1",
+  "capture_config_version": "offline-v1",
+  "capture_status": "VALID_RESPONSE",
+  "quality_flags": ["COMPLETENESS_NOT_ASSERTED"]
+}

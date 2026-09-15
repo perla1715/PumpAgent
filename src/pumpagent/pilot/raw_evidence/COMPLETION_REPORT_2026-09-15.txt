@@ -1,0 +1,258 @@
+PAMPAGENT — TASK 2 COMPLETION REPORT
+Date: 2026-09-15
+Task: Offline Coinalyze Raw Evidence Archive & Replay Contract v1
+Workspace: /Users/oksanachovgan/PumpAgent
+Frozen Task 1 / unchanged HEAD: bd92aac9e2c5a1f6e95400f2333b57e2f842cdb5
+
+RESULT
+
+Task 2 implementation and verification completed. The final offline verification
+passed 917 tests: 141 Task 2 cases, 68 unchanged Task 1 cases and 708 relevant
+live_data/runtime baseline cases. No existing repository file was changed.
+Nothing was staged, committed or pushed. No live polling, Pilot event, Task 3,
+Geometry, alert, outcome or execution integration was implemented.
+
+INSTRUCTION SOURCE
+
+Read the supplied Task 2 prompt from its actual local iCloud path:
+/Users/oksanachovgan/Library/Mobile Documents/com~apple~CloudDocs/PampAgent_CODEX_TASK_2_OFFLINE_COINALYZE_RAW_EVIDENCE_ARCHIVE_REPLAY_V1.txt
+
+The user-specified comappleCloudDocs spelling resolves to this existing
+com~apple~CloudDocs location. The prompt was read; it was not edited.
+
+EXACT FILES ADDED
+
+1. src/pumpagent/pilot/raw_evidence/__init__.py
+2. src/pumpagent/pilot/raw_evidence/contract.py
+3. src/pumpagent/pilot/raw_evidence/archive.py
+4. src/pumpagent/pilot/raw_evidence/README.md
+5. src/pumpagent/pilot/raw_evidence/COMPLETION_REPORT_2026-09-15.txt
+6. tests/pilot/raw_evidence/test_archive.py
+7. tests/fixtures/pilot/raw_evidence/capture_v1.json
+8. tests/fixtures/pilot/raw_evidence/gapped_duplicate_1m.json
+
+Existing files changed: none. All additions stay within the three allowed Task 2
+directories. There are no package export changes outside raw_evidence.
+
+REUSED COMPONENTS
+
+Python standard library only: JSON, SHA-256, timezone-aware datetime, dataclasses,
+POSIX file operations and advisory locking. The existing pytest configuration
+is used unchanged. No Task 1 recorder/journal, acquisition client, analytical
+module or provider service is imported by the implementation. No dependency was
+installed or changed.
+
+SCHEMA AND IDENTITY
+
+Schema: coinalyze-raw-evidence/v1. The caller supplies every required provenance
+field and bytes explicitly. V1 accepts single-symbol GET history captures, with
+closed metadata fields and a request-parameter allowlist. Optional provider API
+version and content type require exactly a value or an unavailable reason.
+Transport provenance requires an HTTP status or an explicit transport error.
+
+The implementation adds required capture_status and quality_flags fields to make
+the prompt's explicit status/quality requirements concrete. Statuses are
+VALID_RESPONSE, MALFORMED_RESPONSE, INCOMPLETE_CAPTURE and PROVIDER_ERROR.
+COMPLETENESS_NOT_ASSERTED is mandatory for every capture. Known gaps, duplicate
+and conflicting records, empty histories, explicit open/incomplete candles and
+null metrics require the corresponding quality flags. No repaired market-data
+object is produced; inspection only validates identity and required markers.
+
+Envelope timestamps must be timezone-aware ISO-8601 with at most microsecond
+precision. They canonicalize to UTC and must satisfy request <= response <=
+recorded. No file mtime or missing provider timestamp is substituted.
+
+Identity covers provider, endpoint, HTTP method, canonical request parameters,
+market, exchange, contract, symbol, interval and request start. raw_evidence_id
+is re1: plus the SHA-256 of canonical request identity. Raw digest and size are
+computed from the actual supplied bytes. A changed request start creates a new
+capture identity; changed bytes or provenance under an existing identity cause
+IDENTITY_CONFLICT. Exact repeat captures return DUPLICATE_NOOP without writes.
+
+Metadata is deterministic UTF-8 JSON, with sorted keys, compact separators and a
+trailing newline. Raw bytes are never re-encoded. The envelope includes all
+provenance, identity, raw hash/size, relative raw/metadata references and manifest
+sequence. metadata_digest hashes the complete metadata object and lives in the
+manifest and returned result, avoiding a self-referential metadata digest.
+
+PERSISTENCE AND REPLAY
+
+Each capture is one ordered, 20-digit directory containing raw.bin,
+metadata.json and manifest.json. Ordered manifest entries form an append-only
+SHA-256 chain. There is no mutable index or separately rewritten manifest head.
+
+An existing dedicated root is required. A writer locks the root directory,
+creates an exclusive pending directory, fsyncs its root entry, writes/fsyncs
+the three objects, fsyncs the pending directory, atomically renames the complete
+bundle to its sequence name, then fsyncs the root. Committed objects are never
+opened for writing. Cooperating concurrent writers serialize on the root lock.
+
+Pre-publication failures leave explicitly reported pending entries. No pending
+entry is automatically promoted, repaired or deleted. Pending entries block
+new appends; exact committed duplicates still return DUPLICATE_NOOP with pending
+names. A post-rename root-fsync failure returns PERSISTENCE_ERROR, not a success
+claim. Replay determines whether the full bundle is committed before retry.
+
+Replay revalidates every committed bundle, canonical metadata, recomputed
+identity, raw hash/size, metadata digest, relative references, sequence order,
+unique identity and manifest chain. Missing objects, symlinks, nonregular files,
+invalid envelopes and mismatches return CORRUPTION_ERROR with no valid prefix.
+Unknown root entries are reported without following or deleting them.
+
+Structured archive results: ARCHIVED, DUPLICATE_NOOP, IDENTITY_CONFLICT,
+VALIDATION_ERROR, PERSISTENCE_ERROR, CORRUPTION_ERROR.
+Replay returns exact bytes in manifest order, pending names and an optional
+error_status. Its complete flag describes archive recovery, never market-data
+completeness. Supplied sensitive values are not echoed in error results.
+
+ACCEPTANCE COVERAGE
+
+01 Exact-byte preservation: disk and replay equal the original bytes, including
+   whitespace and CRLF.
+02 Digests: independently calculated raw SHA-256/size and metadata SHA-256;
+   caller-supplied digest fields are rejected.
+03 Canonical determinism: reordered metadata and equivalent timezone spellings
+   produce identical evidence and archive files in equivalent fresh archives.
+04 First archive: exactly three objects and sequence 1.
+05 Duplicate replay: DUPLICATE_NOOP; file contents and mtimes unchanged.
+06 Changed raw content: IDENTITY_CONFLICT; original files unchanged.
+07 Changed provenance: conflicts for times, capture versions, provider version,
+   content type and capture status.
+08 Timestamps: absent, malformed, naive, invalid-offset and reversed values
+   fail before writes. File mtimes do not affect replay provenance.
+09 Credentials: disallowed request keys, secret values, headers, endpoint query
+   credentials and recognizable raw-body credentials fail without persistence
+   or disclosure in returned errors.
+10 Malformed payloads: malformed provider time requires MALFORMED_RESPONSE;
+   truncated/undecodable/ambiguous JSON requires incomplete/provider-error
+   status. HTTP/provider errors are preserved only with non-valid status.
+11 Missing/duplicate/gapped 1m fixture: all records, conflicts, late ordering,
+   null metrics and open-candle flags remain byte-exact; required markers are
+   explicit, with no interpolation, deduplication, substitution or repair.
+12 Identity mismatch: request and payload symbol/exchange/contract conflicts
+   fail, including when the caller labels a response malformed/provider-error.
+13 Atomicity: partial failures in each object, rename failure and all six fsync
+   points tested; earlier committed evidence survives a failed next append.
+14 Corruption: each object, manifest identity/reference/hash/sequence and altered
+   metadata with an updated digest are checked. No valid prefix is returned.
+15 Missing objects: each missing bundle object causes corruption and blocks
+   append. Sequence gaps and nonregular/symlink objects are also checked.
+16 Restart: fresh instances rebuild sequence/identity and preserve duplicate
+   idempotence; later request identity appends and manifest chaining is checked.
+17 Pending entries: partial/complete pending bundles and unknown files/symlinks
+   are explicitly reported and left untouched.
+18 Offline boundaries: implementation import allowlist, socket/subprocess/system
+   call traps, and a full-suite Python audit hook prohibit network/process use.
+19 Task 1: all 68 original recorder tests pass; all six frozen files unchanged.
+20 Relevant baseline: all 708 existing live_data/runtime tests pass unchanged.
+
+Additional checks cover all required input fields, explicit unavailable reasons,
+concurrent duplicate and distinct writers, unavailable roots, long provider
+error bodies and invalid committed file types. Parameterized cases total 141.
+
+EXACT TEST COMMANDS AND RESULTS
+
+All commands ran from /Users/oksanachovgan/PumpAgent. -B suppresses bytecode
+writes; no:cacheprovider suppresses pytest cache writes.
+
+Pre-implementation regression baseline:
+python3 -B -m pytest -p no:cacheprovider -q tests/pilot/test_checkpoint_recorder.py tests/live_data tests/runtime
+Result: 776 passed in 8.24s.
+
+Initial Task 2 verification:
+python3 -B -m pytest -p no:cacheprovider -q tests/pilot/raw_evidence
+Result: 113 passed in 1.74s.
+
+Final Task 2 verification after additional hardening and coverage:
+python3 -B -m pytest -p no:cacheprovider -q tests/pilot/raw_evidence
+Result: 141 passed in 2.03s.
+
+Final combined offline verification (exact command):
+
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -B - <<'PY'
+import sys
+import pytest
+
+def offline_guard(event, args):
+    if event.startswith(('socket.', 'subprocess.', 'os.exec', 'os.spawn', 'os.posix_spawn')) or event == 'os.system':
+        raise AssertionError('Offline verification blocked: ' + event)
+
+class Counts:
+    def pytest_collection_finish(self, session):
+        groups = {'task2': 0, 'task1': 0, 'baseline': 0}
+        for item in session.items:
+            path = item.nodeid.split('::', 1)[0]
+            group = 'task2' if '/raw_evidence/' in path else 'task1' if path.endswith('test_checkpoint_recorder.py') else 'baseline'
+            groups[group] += 1
+        print('\nAcceptance collection:', groups)
+
+sys.addaudithook(offline_guard)
+raise SystemExit(pytest.main(['-p', 'no:cacheprovider', '-q', 'tests/pilot/raw_evidence', 'tests/pilot/test_checkpoint_recorder.py', 'tests/live_data', 'tests/runtime'], plugins=[Counts()]))
+PY
+
+Result: collection {'task2': 141, 'task1': 68, 'baseline': 708};
+917 passed in 7.90s. No prohibited audit event occurred.
+
+PROTECTED-SCOPE VERIFICATION
+
+The preflight preservation record is /private/tmp/pumpagent_task2_preflight.json.
+SHA-256 comparison after implementation and testing verified all 543 recorded
+pre-existing files unchanged. Environment credential files were excluded from
+content hashing. Exact Git porcelain status outside the three permitted Task 2
+directories remained identical to the preflight status, including existing
+modified, deleted and untracked files. The original 49 tracked local changes
+were preserved. HEAD remains the frozen Task 1 commit stated above.
+
+The six frozen Task 1 files were also checked against that commit:
+src/pumpagent/pilot/__init__.py
+src/pumpagent/pilot/checkpoint.py
+src/pumpagent/pilot/journal.py
+src/pumpagent/pilot/README.md
+tests/pilot/test_checkpoint_recorder.py
+tests/fixtures/pilot/two_checkpoints_v1.json
+
+No existing scanner, acquisition, runtime, lifecycle, Framework, research,
+checkpoint, learning-memory, analytical or execution file was modified by Task 2.
+
+GIT DIFF RESTRICTED TO TASK 2
+
+All eight new files remain untracked and unstaged. Ordinary git diff omits
+untracked files, so the scoped review patch is generated with:
+git --no-optional-locks diff --no-index -- /dev/null <each-exact-added-file>
+
+Concatenated review artifact:
+/private/tmp/PampAgent_TASK_2_2026-09-15.patch
+
+Only the eight listed Task 2 additions are included; all pre-existing changes
+are excluded. Whitespace validation uses:
+git --no-optional-locks diff --no-index --check -- /dev/null <each-exact-added-file>
+
+DEVIATIONS, INTERPRETATIONS AND LIMITATIONS
+
+No protected-scope deviation. The status/quality fields, exact optional-value
+objects, single-symbol history scope and allowed parameter types make the
+prompt's prose requirements concrete; README.md documents the complete API.
+No separate acquisition or provider schema expansion is included.
+
+The append-only manifest is one immutable entry per atomically published bundle,
+not a mutable shared JSONL file. Manifest sequence/reference determinism depends
+on append order, while request identity does not depend on archive location.
+
+Filesystem semantics are local POSIX locking, rename and fsync. Fault injection
+does not prove physical power-loss behavior. Network filesystems, distributed
+writers and object stores are not supported by this contract. Root ancestors
+and the local account are trusted. Immutability is enforced by the API, not
+hardware or signatures. Coordinated malicious replacement of every object/hash,
+or deletion of the complete archive/trailing bundles, needs an external trusted
+anchor to detect. Replay currently scans and loads the entire archive in memory.
+
+Validation does not establish provider truth, complete requested coverage or
+implicit candle closure. Unsupported request metadata is rejected. Recognizable
+secrets are rejected, but arbitrary opaque strings cannot be universally
+identified as credentials; callers must supply credential-free inputs. The
+archive never contacts a provider to verify, fill or replace missing evidence.
+
+STOP
+
+Implementation, required verification and this report are complete. No commit,
+push, live integration, subsequent Pilot task or other follow-on work authorized.
