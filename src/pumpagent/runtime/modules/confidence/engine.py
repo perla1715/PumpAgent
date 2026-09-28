@@ -31,6 +31,7 @@ def build_confidence_assessment(
     scenario_probability: ScenarioProbability | None,
     *,
     runtime_event_id: str | None = None,
+    active_episode_id: str | None = None,
     data_quality_impact: str = "data_quality_not_independently_assessed_v0.1",
 ) -> ConfidenceAssessment:
     """Build final reliability assessment without decisions or alerts."""
@@ -41,6 +42,7 @@ def build_confidence_assessment(
         agent_state,
         scenario_probability,
         runtime_event_id=event_id,
+        active_episode_id=active_episode_id,
     )
 
     drivers = _confidence_drivers(
@@ -65,6 +67,8 @@ def build_confidence_assessment(
 
     return ConfidenceAssessment(
         event_id=event_id,
+        episode_id=hypothesis.episode_id,
+        source_hypothesis_id=hypothesis.hypothesis_id,
         final_confidence_level=final_level,
         confidence_summary=(
             "Reliability assessed from hypothesis support, official state "
@@ -117,6 +121,7 @@ def _validate_inputs(
     scenario_probability: ScenarioProbability | None,
     *,
     runtime_event_id: str,
+    active_episode_id: str | None,
 ) -> None:
     if hypothesis.event_id != runtime_event_id:
         raise ConfidenceError(
@@ -130,10 +135,36 @@ def _validate_inputs(
 
     if (
         scenario_probability is not None
-        and scenario_probability.event_id != runtime_event_id
+        and scenario_probability.runtime_event_id != runtime_event_id
     ):
         raise ConfidenceError(
-            "ScenarioProbability.event_id must match the RuntimeEvent.event_id."
+            "ScenarioProbability.runtime_event_id must match the "
+            "RuntimeEvent.event_id."
+        )
+
+    if (
+        scenario_probability is not None
+        and scenario_probability.episode_id != hypothesis.episode_id
+    ):
+        raise ConfidenceError(
+            "ScenarioProbability.episode_id must match HypothesisPackage.episode_id."
+        )
+
+    if (
+        scenario_probability is not None
+        and scenario_probability.source_hypothesis_id != hypothesis.hypothesis_id
+    ):
+        raise ConfidenceError(
+            "ScenarioProbability.source_hypothesis_id must match "
+            "HypothesisPackage.hypothesis_id."
+        )
+
+    if (
+        active_episode_id is not None
+        and active_episode_id != hypothesis.episode_id
+    ):
+        raise ConfidenceError(
+            "Active episode ID must match HypothesisPackage.episode_id."
         )
 
 
@@ -197,7 +228,7 @@ def _confidence_reducers(
         elif scenario_probability.uncertainty == UncertaintyLevel.UNKNOWN:
             reducers.append("scenario_uncertainty_unknown")
 
-        if scenario_probability.contradicting_evidence:
+        if scenario_probability.contradicting_provenance:
             reducers.append("scenario_has_contradicting_evidence")
 
     if not hypothesis.supporting_evidence:
@@ -295,4 +326,10 @@ def _data_quality_is_acceptable(data_quality_impact: str) -> bool:
 
 
 def _scenario_weights_sum_valid(scenario_probability: ScenarioProbability) -> bool:
-    return round(sum(scenario_probability.scenario_probabilities.values()), 10) == 1.0
+    return (
+        sum(
+            (item.probability for item in scenario_probability.distribution),
+            start=0,
+        )
+        == 1
+    )

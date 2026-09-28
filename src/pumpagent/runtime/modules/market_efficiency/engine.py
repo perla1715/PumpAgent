@@ -1,6 +1,6 @@
 """Market Efficiency Engine v0.2.
 
-Market Efficiency produces or refines objective participation evidence.
+Market Efficiency produces or validates objective participation evidence.
 It remains evidence-only and does not own downstream Runtime reasoning.
 """
 
@@ -106,7 +106,7 @@ def refine_market_efficiency_evidence(
     *,
     runtime_event_id: str | None = None,
 ) -> MarketEfficiencyEvidence:
-    """Validate Perception-produced MarketEfficiencyEvidence without interpretation."""
+    """Validate externally supplied MarketEfficiencyEvidence."""
 
     event_id = runtime_event_id or evidence.event_id
     if evidence.event_id != event_id:
