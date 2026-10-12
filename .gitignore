@@ -1,3 +1,15 @@
 .env
 .env.*
 !.env.example
+
+# Local interpreter and Finder artifacts.
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Mutable prospective-collection runtime state and live evidence.
+/runtime_data/
+/checkpoints/contextual_attention_test_v1_activity_mapper_live_cycle_2026-10-08/
+/checkpoints/contextual_attention_test_v1_post_diagnostic_verification_cycle_2026-10-08/
+/checkpoints/contextual_attention_test_v1_prospective_block_001_2026-10-08/
+/checkpoints/contextual_attention_test_v1_semi_autonomous/
