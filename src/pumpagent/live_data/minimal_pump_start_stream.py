@@ -122,17 +122,18 @@ class MinimalPumpStartStream:
         """Process only bars later than persistent state; never backfill old bars."""
         asof = _utc(asof); symbol = symbol.upper(); state = self.store.get(symbol) or self._new_state(symbol)
         last = _utc(state["last_processed_closed_1m_timestamp"]) if state.get("last_processed_closed_1m_timestamp") else None
-        rows = []
+        rows = []; output: list[dict[str, Any]] = []
         for raw in bars_1m:
             try:
                 if _bar_timestamp(raw) <= asof: rows.append(raw)
             except (TypeError, ValueError, KeyError):
-                row = {**self._base(symbol, asof, asof), "source_closed_1m_timestamp": None,
-                       "state": INSUFFICIENT_EVIDENCE, "reason": "MALFORMED_1M_TIMESTAMP",
-                       "data_quality_state": INSUFFICIENT_EVIDENCE}
+                row = self._insufficient(
+                    {**self._base(symbol, asof, asof), "source_closed_1m_timestamp": None},
+                    state,
+                    "MALFORMED_1M_TIMESTAMP",
+                )
                 row["journal_result"] = self.journal.append(row); output.append(row)
         rows.sort(key=_bar_timestamp)
-        output: list[dict[str, Any]] = []
         for raw in rows:
             timestamp = _bar_timestamp(raw)
             if last is not None and timestamp <= last: continue

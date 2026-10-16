@@ -105,3 +105,30 @@ def test_malformed_and_stale_bars_fail_closed_without_destroying_event(tmp_path)
     stale = bar(start + timedelta(minutes=7), open_=100, close=101)
     result = s.process("ALT", bars_1m=[stale], bars_3m=three, bars_5m=five, asof=start + timedelta(minutes=11))[-1]
     assert result["state"] == INSUFFICIENT_EVIDENCE and result["reason"] == "STALE_CLOSED_1M"
+
+def test_malformed_timestamp_fails_closed_without_an_active_event(tmp_path):
+    s = stream(tmp_path); asof = datetime(2026, 10, 15, 10, tzinfo=UTC)
+    malformed = {"timestamp": "not-a-timestamp", "closed": True, "native_or_reconstructed": "NATIVE"}
+    result = s.process("ALT", bars_1m=[malformed], bars_3m=[], bars_5m=[], asof=asof)
+    assert len(result) == 1
+    assert result[0]["state"] == INSUFFICIENT_EVIDENCE
+    assert result[0]["reason"] == "MALFORMED_1M_TIMESTAMP"
+    assert result[0].get("event_id") is None
+    assert len(s.journal.records()) == 1
+
+def test_malformed_timestamp_preserves_active_event_identity_and_extrema(tmp_path):
+    s = stream(tmp_path); start = datetime(2026, 10, 15, 10, tzinfo=UTC); one, three, five = inputs(start)
+    s.prime_context("ALT", one[:5])
+    first = s.process("ALT", bars_1m=[one[-1]], bars_3m=three, bars_5m=five, asof=start + timedelta(minutes=6))[-1]
+    before = s.store.get("ALT")
+    malformed = {"timestamp": "not-a-timestamp", "closed": True, "native_or_reconstructed": "NATIVE"}
+    result = s.process("ALT", bars_1m=[malformed], bars_3m=[], bars_5m=[], asof=start + timedelta(minutes=7))[-1]
+    after = s.store.get("ALT")
+    assert result["state"] == INSUFFICIENT_EVIDENCE
+    assert result["reason"] == "MALFORMED_1M_TIMESTAMP"
+    assert result["event_id"] == first["event_id"]
+    assert result["START_PRICE"] == first["START_PRICE"]
+    assert result["active_event_state"] == ACTIVE_PUMP_EVENT
+    assert after["active_event_id"] == before["active_event_id"]
+    assert after["start_price"] == before["start_price"]
+    assert after["max_pump_pct"] == before["max_pump_pct"]
