@@ -17,16 +17,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pumpagent.runtime.domain import RuntimeEvent
-from pumpagent.runtime.domain.enums import AlertCategory
-from pumpagent.runtime.modules.agent_state import add_agent_state
-from pumpagent.runtime.modules.confidence import add_confidence_assessment
-from pumpagent.runtime.modules.decision_alert import add_decision_alert
-from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
 from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.structure import add_structural_evidence
-from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
+from pumpagent.runtime.orchestrator.runtime_loop import AgentCycleResult, RuntimeOrchestrator
 
 
 RUNTIME_SECTIONS = (
@@ -112,15 +107,6 @@ class RuntimePipelineContractTests(unittest.TestCase):
                 ("market_efficiency_evidence",),
                 add_market_efficiency_evidence,
             ),
-            ("Hypothesis", ("hypothesis_package",), add_hypothesis_package),
-            ("Agent State", ("agent_state",), add_agent_state),
-            (
-                "Scenario Probability",
-                ("scenario_probability",),
-                add_scenario_probability,
-            ),
-            ("Confidence", ("confidence_assessment",), add_confidence_assessment),
-            ("Decision / Alert", ("decision_alert",), add_decision_alert),
         )
 
         for stage_name, added_sections, stage_function in stages:
@@ -148,16 +134,19 @@ class RuntimePipelineContractTests(unittest.TestCase):
                         f"{stage_name} populated future section {section}",
                     )
 
-        self.assertIn(
-            event.decision_alert.alert_category,
-            (
-                AlertCategory.NO_ACTION,
-                AlertCategory.WATCH,
-                AlertCategory.WARNING,
-                AlertCategory.HIGH_ATTENTION,
-            ),
+        result = RuntimeOrchestrator(
+            hypothesis_id_generator=lambda: "pipeline-contract-hypothesis-1"
+        ).process_market_update(
+            event.market_snapshot,
+            episode_id="pipeline-contract-episode-1",
         )
-        self.assertIsNone(event.learning_metadata)
+        self.assertIsInstance(result, AgentCycleResult)
+        self.assertEqual(result.hypothesis.episode_id, "pipeline-contract-episode-1")
+        self.assertEqual(result.hypothesis.hypothesis_id, "pipeline-contract-hypothesis-1")
+        self.assertIsNotNone(result.agent_state)
+        self.assertIsNotNone(result.scenario_probability)
+        self.assertIsNotNone(result.confidence_assessment)
+        self.assertIsNotNone(result.decision_assessment)
 
 
 def _section_values(event: RuntimeEvent) -> dict[str, object]:

@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-from pumpagent.runtime.domain import RuntimeEvent
+from pumpagent.runtime.domain import HypothesisPackage, RuntimeEvent
 from pumpagent.runtime.modules.agent_state import add_agent_state
 from pumpagent.runtime.modules.confidence import add_confidence_assessment
 from pumpagent.runtime.modules.decision_alert import add_decision_alert
@@ -20,6 +20,7 @@ from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_ev
 from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
 from pumpagent.runtime.modules.structure import add_structural_evidence
+from pumpagent.runtime.orchestrator.runtime_loop import AgentCycleResult, RuntimeOrchestrator
 
 
 class FixtureRuntimeStage(str, Enum):
@@ -54,7 +55,10 @@ def run_fixture_runtime_cycle(
     run_decision_alert: bool = False,
     run_learning_memory: bool = False,
     target_stage: FixtureRuntimeStage | str | None = None,
-) -> RuntimeEvent:
+    episode_id: str | None = None,
+    previous_hypothesis: HypothesisPackage | None = None,
+    runtime: RuntimeOrchestrator | None = None,
+) -> RuntimeEvent | AgentCycleResult:
     """Create a RuntimeEvent and optionally run the fixture Runtime flow."""
 
     stage = _resolve_target_stage(
@@ -80,6 +84,22 @@ def run_fixture_runtime_cycle(
     )
 
     event = add_market_snapshot_from_fixture(event, fixture_path)
+
+    # Hypothesis and later stages are owned by the canonical RuntimeOrchestrator.
+    # The legacy fixture adapter has no authority to manufacture episode identity,
+    # explanation confidence, lifecycle status, transition provenance, or a
+    # hypothesis identity.  Route the supplied fixture snapshot to that owner.
+    if _stage_reaches(stage, FixtureRuntimeStage.HYPOTHESIS):
+        if not isinstance(episode_id, str) or not episode_id.strip():
+            raise ValueError(
+                "A Lifecycle-owned episode_id is required for fixture Hypothesis "
+                "and later stages."
+            )
+        return (runtime or RuntimeOrchestrator()).process_market_update(
+            event.market_snapshot,
+            episode_id=episode_id,
+            previous_hypothesis=previous_hypothesis,
+        )
 
     if _stage_reaches(stage, FixtureRuntimeStage.OBSERVATION_PACKAGE):
         event = add_observation_package(event)
@@ -108,7 +128,7 @@ def run_fixture_runtime_cycle(
     return event
 
 
-def run_fixture_market_data_cycle(**kwargs: object) -> RuntimeEvent:
+def run_fixture_market_data_cycle(**kwargs: object) -> RuntimeEvent | AgentCycleResult:
     """Compatibility alias for the renamed fixture Runtime entry point."""
 
     return run_fixture_runtime_cycle(**kwargs)
