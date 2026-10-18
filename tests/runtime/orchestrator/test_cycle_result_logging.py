@@ -15,12 +15,14 @@ from pumpagent.runtime.orchestrator import (
     run_agent_cycle,
     serialize_agent_cycle_result,
 )
-from tests.runtime.orchestrator.test_runtime_loop import make_snapshot
+from tests.runtime.orchestrator.test_runtime_loop import TEST_EPISODE_ID, make_snapshot
 
 
 class RuntimeCycleResultLoggingTests(unittest.TestCase):
     def test_serialization_includes_core_fields(self) -> None:
-        result = run_agent_cycle(make_snapshot(), previous_state="UNKNOWN")
+        result = run_agent_cycle(
+            make_snapshot(), previous_state="UNKNOWN", episode_id=TEST_EPISODE_ID
+        )
 
         serialized = serialize_agent_cycle_result(result)
 
@@ -31,21 +33,27 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         self.assertEqual(serialized["exchange"], "binance")
         self.assertEqual(serialized["timeframe"], "1m")
         self.assertEqual(serialized["previous_state"], "UNKNOWN")
-        self.assertEqual(serialized["new_state"], "IGNITION")
-        self.assertEqual(serialized["hypothesis_id"], result.hypothesis.id)
-        self.assertEqual(serialized["hypothesis_status"], result.hypothesis.status)
+        self.assertEqual(serialized["new_state"], result.agent_state.current_state.name)
+        self.assertEqual(serialized["hypothesis_id"], result.hypothesis.hypothesis_id)
+        self.assertEqual(
+            serialized["hypothesis_status"], result.hypothesis.lifecycle_status.value
+        )
         self.assertEqual(serialized["confidence"], 50)
         self.assertEqual(serialized["agent_state_event_id"], result.agent_state.event_id)
         self.assertEqual(len(serialized["evidence"]), 3)
 
     def test_schema_version_is_present(self) -> None:
-        serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
+        serialized = serialize_agent_cycle_result(
+            run_agent_cycle(make_snapshot(), episode_id=TEST_EPISODE_ID)
+        )
 
         self.assertIn("schema_version", serialized)
         self.assertEqual(serialized["schema_version"], "runtime_cycle_v1")
 
     def test_existing_serialized_fields_remain_backward_compatible(self) -> None:
-        serialized = serialize_agent_cycle_result(run_agent_cycle(make_snapshot()))
+        serialized = serialize_agent_cycle_result(
+            run_agent_cycle(make_snapshot(), episode_id=TEST_EPISODE_ID)
+        )
 
         expected_fields = {
             "schema_version",
@@ -66,7 +74,7 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         self.assertEqual(set(serialized), expected_fields)
 
     def test_serialization_is_deterministic(self) -> None:
-        result = run_agent_cycle(make_snapshot())
+        result = run_agent_cycle(make_snapshot(), episode_id=TEST_EPISODE_ID)
 
         first = serialize_agent_cycle_result(result)
         second = serialize_agent_cycle_result(result)
@@ -74,7 +82,9 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_missing_optional_data_is_handled_safely(self) -> None:
-        result = run_agent_cycle(make_snapshot(include_market_metrics=False))
+        result = run_agent_cycle(
+            make_snapshot(include_market_metrics=False), episode_id=TEST_EPISODE_ID
+        )
 
         serialized = serialize_agent_cycle_result(result)
 
@@ -94,7 +104,9 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         )
 
     def test_state_fields_come_from_canonical_agent_state(self) -> None:
-        result = run_agent_cycle(make_snapshot(), previous_state="ignition")
+        result = run_agent_cycle(
+            make_snapshot(), previous_state="ignition", episode_id=TEST_EPISODE_ID
+        )
 
         serialized = serialize_agent_cycle_result(result)
 
@@ -105,7 +117,7 @@ class RuntimeCycleResultLoggingTests(unittest.TestCase):
         self.assertEqual(serialized["new_state"], result.agent_state.current_state.name)
 
     def test_serialization_does_not_mutate_agent_cycle_result(self) -> None:
-        result = run_agent_cycle(make_snapshot())
+        result = run_agent_cycle(make_snapshot(), episode_id=TEST_EPISODE_ID)
         before = result.log_messages
 
         serialize_agent_cycle_result(result)
