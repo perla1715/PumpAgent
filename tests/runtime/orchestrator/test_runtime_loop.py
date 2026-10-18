@@ -204,9 +204,17 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertFalse(hasattr(hypothesis_module, legacy_contract))
         self.assertFalse(hasattr(hypothesis_module, legacy_builder))
         self.assertFalse(hasattr(agent_state_module, legacy_bridge))
-        self.assertFalse(
-            (SRC / "pumpagent/runtime/modules/hypothesis/lifecycle.py").exists()
-        )
+        self.assertFalse(hasattr(hypothesis_module, "resolve_hypothesis_status"))
+        hypothesis_engine = (
+            SRC / "pumpagent/runtime/modules/hypothesis/engine.py"
+        ).read_text(encoding="utf-8")
+        runtime_loop = (
+            SRC / "pumpagent/runtime/orchestrator/runtime_loop.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def _canonical_lifecycle_status", hypothesis_engine)
+        self.assertIn("def _canonical_lifecycle_reason", hypothesis_engine)
+        self.assertNotIn("modules.hypothesis.lifecycle", hypothesis_engine)
+        self.assertNotIn("modules.hypothesis.lifecycle", runtime_loop)
         self.assertFalse(
             (SRC / "pumpagent/runtime/modules/agent_state/legacy_bridge.py").exists()
         )

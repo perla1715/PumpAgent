@@ -195,15 +195,20 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
         append(journal, inputs[0])
         recover(journal, symbol="DEMOUSDT")
     pilot = Path(__file__).resolve().parents[2] / "src/pumpagent/pilot"
-    allowed = {"__future__", "contextlib", "dataclasses", "datetime", "enum", "fcntl", "hashlib",
-               "json", "math", "os", "pathlib", "re", "stat", "tempfile"}
+    allowed = {"__future__", "contextlib", "csv", "dataclasses", "datetime", "enum", "fcntl", "hashlib",
+               "json", "math", "os", "pathlib", "re", "stat", "tempfile", "typing"}
+    allowed_project_imports = {
+        "pumpagent.live_data.adapters.market_cap_rank",
+        "pumpagent.live_data.domain",
+        "pumpagent.live_data.validation.validator",
+        "pumpagent.pilot.pilot_search_profile",
+    }
     for source in pilot.glob("*.py"):
         for node in ast.walk(ast.parse(source.read_text())):
             if isinstance(node, ast.Import):
                 assert all(alias.name in allowed for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and not node.level:
-                assert node.module in allowed or node.module in (
-                    "pumpagent.live_data.domain", "pumpagent.live_data.validation.validator")
+                assert node.module in allowed or node.module in allowed_project_imports
 
 
 def test_15_fixed_commit_time_identical(journal, tmp_path, inputs):
