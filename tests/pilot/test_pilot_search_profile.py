@@ -51,12 +51,32 @@ class PilotSearchProfileTests(unittest.TestCase):
         self.assertFalse(result.p4_pass); self.assertFalse(result.qualifies)
 
     def test_f_p5_exactly_five_qualifies(self):
-        result = evaluate_candidate(candidate(prices=(100, 105, 99.75, 105)))
+        result = evaluate_candidate(candidate(prices=(100, 105, 99.75, 104)))
         self.assertAlmostEqual(result.max_running_high_pullback_percent, 5.0); self.assertTrue(result.p5_pass)
 
     def test_g_p5_above_five_rejects(self):
-        result = evaluate_candidate(candidate(prices=(100, 105, 99.74, 105)))
+        result = evaluate_candidate(candidate(prices=(100, 105, 99.74, 104)))
         self.assertFalse(result.p5_pass); self.assertFalse(result.qualifies)
+
+    def test_inner_low_is_selected_as_largest_causal_pump_start(self):
+        result = evaluate_candidate(candidate(prices=(100, 95, 101, 104)))
+        self.assertEqual(result.start_price, 95.0)
+        self.assertEqual(result.local_high, 104.0)
+        self.assertAlmostEqual(result.pump_percent, (104.0 - 95.0) / 95.0 * 100.0)
+        self.assertTrue(result.p1_pass)
+
+    def test_later_low_cannot_start_an_earlier_high(self):
+        result = evaluate_candidate(candidate(prices=(100, 110, 90, 95)))
+        self.assertEqual(result.start_price, 100.0)
+        self.assertEqual(result.local_high, 110.0)
+        self.assertAlmostEqual(result.pump_percent, 10.0)
+
+    def test_largest_pair_tie_uses_first_chronological_pair(self):
+        item = candidate(prices=(100, 110, 100, 110))
+        result = evaluate_candidate(item)
+        self.assertEqual(result.start_timestamp_utc, item.observations[0].timestamp_utc)
+        self.assertEqual(result.local_high_timestamp_utc, item.observations[1].timestamp_utc)
+        self.assertAlmostEqual(result.pump_percent, 10.0)
 
     def test_h_largest_qualified_pump_wins(self):
         smaller = candidate("ALPHAUSDT", (100, 106))

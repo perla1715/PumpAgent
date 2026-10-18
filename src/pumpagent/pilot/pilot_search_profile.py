@@ -189,14 +189,16 @@ def evaluate_candidate(candidate: CandidateInput, *, rank_max_age: timedelta = t
     rows = tuple(row for row in candidate.observations if window_start <= _utc(row.timestamp_utc) <= evaluation)
     if len(rows) < 2:
         return _failed(candidate, "NON_TOP50_ELIGIBLE", entry.rank, "Insufficient closed observations in rolling 20-minute window.")
-    start = rows[0]
-    high = max(rows, key=lambda row: (row.price, -_utc(row.timestamp_utc).timestamp()))
+    start_index, high_index, pump = _largest_upward_pair(rows)
+    start = rows[start_index]
+    high = rows[high_index]
     current = rows[-1]
-    pump = (high.price - start.price) / start.price * 100.0
     distance = (high.price - current.price) / high.price * 100.0
+    # P5 applies to the selected qualifying pump sequence through evaluation,
+    # never to observations before the selected start and never to future rows.
     running_high = -math.inf
     maximum_pullback = 0.0
-    for row in rows:
+    for row in rows[start_index:]:
         running_high = max(running_high, row.price)
         maximum_pullback = max(maximum_pullback, (running_high - row.price) / running_high * 100.0)
     p1 = pump >= PUMP_MIN_PERCENT
@@ -304,6 +306,24 @@ def validate_case_manifest_boundary(path: str | Path) -> dict[str, Any]:
     if pilot is None or pilot.get("role") != "LIVE_PILOT" or pilot.get("status") != "NOT_STARTED":
         raise PilotEvidenceError("PILOT_EVENT_001 must remain NOT_STARTED")
     return {"historical_rows_unchanged": True, "pilot_event_not_started": True}
+
+
+def _largest_upward_pair(rows: Sequence[PriceObservation]) -> tuple[int, int, float]:
+    """Return the largest causal start→high percentage pair in chronological rows.
+
+    Ties retain the first chronological pair encountered: earliest start, then
+    earliest high. A later low is consequently never allowed to start an earlier
+    high, and no observation after evaluation reaches this function.
+    """
+    best_start = best_high = 0
+    best_pump = 0.0
+    for start_index, start in enumerate(rows):
+        for high_index in range(start_index, len(rows)):
+            high = rows[high_index]
+            pump = (high.price - start.price) / start.price * 100.0
+            if pump > best_pump:
+                best_start, best_high, best_pump = start_index, high_index, pump
+    return best_start, best_high, best_pump
 
 
 def _failed(candidate: CandidateInput, status: str, rank: int | None, reason: str) -> CandidateEvaluation:
