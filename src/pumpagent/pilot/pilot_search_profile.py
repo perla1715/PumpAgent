@@ -194,11 +194,11 @@ def evaluate_candidate(candidate: CandidateInput, *, rank_max_age: timedelta = t
     high = rows[high_index]
     current = rows[-1]
     distance = (high.price - current.price) / high.price * 100.0
-    # P5 applies to the selected qualifying pump sequence through evaluation,
-    # never to observations before the selected start and never to future rows.
+    # P5 preserves the Owner-ratified running-high pullback across the entire
+    # closed rolling window. The selected P1 start never resets this history.
     running_high = -math.inf
     maximum_pullback = 0.0
-    for row in rows[start_index:]:
+    for row in rows:
         running_high = max(running_high, row.price)
         maximum_pullback = max(maximum_pullback, (running_high - row.price) / running_high * 100.0)
     p1 = pump >= PUMP_MIN_PERCENT

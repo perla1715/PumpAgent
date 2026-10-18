@@ -65,6 +65,15 @@ class PilotSearchProfileTests(unittest.TestCase):
         self.assertAlmostEqual(result.pump_percent, (104.0 - 95.0) / 95.0 * 100.0)
         self.assertTrue(result.p1_pass)
 
+    def test_full_window_p5_rejects_pullback_before_selected_p1_start(self):
+        result = evaluate_candidate(candidate(prices=(110, 100, 95, 104)))
+        self.assertEqual(result.start_price, 95.0)
+        self.assertEqual(result.local_high, 104.0)
+        self.assertAlmostEqual(result.pump_percent, (104.0 - 95.0) / 95.0 * 100.0)
+        self.assertTrue(result.p1_pass)
+        self.assertFalse(result.p5_pass)
+        self.assertFalse(result.qualifies)
+
     def test_later_low_cannot_start_an_earlier_high(self):
         result = evaluate_candidate(candidate(prices=(100, 110, 90, 95)))
         self.assertEqual(result.start_price, 100.0)
