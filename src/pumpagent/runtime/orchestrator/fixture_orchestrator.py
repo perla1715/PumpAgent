@@ -16,13 +16,18 @@ from pumpagent.runtime.modules.confidence import add_confidence_assessment
 from pumpagent.runtime.modules.decision_alert import add_decision_alert
 from pumpagent.runtime.modules.hypothesis import add_hypothesis_package
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
-from pumpagent.runtime.modules.perception import add_perception_evidence
+from pumpagent.runtime.modules.market_efficiency import add_market_efficiency_evidence
+from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.scenario_probability import add_scenario_probability
+from pumpagent.runtime.modules.structure import add_structural_evidence
 
 
 class FixtureRuntimeStage(str, Enum):
     MARKET_DATA = "market_data"
+    OBSERVATION_PACKAGE = "observation_package"
     PERCEPTION = "perception"
+    STRUCTURE = "structure"
+    MARKET_EFFICIENCY = "market_efficiency"
     HYPOTHESIS = "hypothesis"
     AGENT_STATE = "agent_state"
     SCENARIO_PROBABILITY = "scenario_probability"
@@ -76,8 +81,14 @@ def run_fixture_runtime_cycle(
 
     event = add_market_snapshot_from_fixture(event, fixture_path)
 
-    if _stage_reaches(stage, FixtureRuntimeStage.PERCEPTION):
-        event = add_perception_evidence(event)
+    if _stage_reaches(stage, FixtureRuntimeStage.OBSERVATION_PACKAGE):
+        event = add_observation_package(event)
+
+    if _stage_reaches(stage, FixtureRuntimeStage.STRUCTURE):
+        event = add_structural_evidence(event)
+
+    if _stage_reaches(stage, FixtureRuntimeStage.MARKET_EFFICIENCY):
+        event = add_market_efficiency_evidence(event)
 
     if _stage_reaches(stage, FixtureRuntimeStage.HYPOTHESIS):
         event = add_hypothesis_package(event)
@@ -123,8 +134,12 @@ def _resolve_target_stage(
 
     if target_stage is not None:
         if isinstance(target_stage, FixtureRuntimeStage):
-            return target_stage
-        return FixtureRuntimeStage(str(target_stage))
+            requested_stage = target_stage
+        else:
+            requested_stage = FixtureRuntimeStage(str(target_stage))
+        if requested_stage is FixtureRuntimeStage.PERCEPTION:
+            return FixtureRuntimeStage.OBSERVATION_PACKAGE
+        return requested_stage
 
     if run_decision_alert:
         return FixtureRuntimeStage.DECISION_ALERT
@@ -136,10 +151,12 @@ def _resolve_target_stage(
         return FixtureRuntimeStage.AGENT_STATE
     if run_hypothesis:
         return FixtureRuntimeStage.HYPOTHESIS
-    if run_market_efficiency or run_structure:
-        return FixtureRuntimeStage.PERCEPTION
+    if run_market_efficiency:
+        return FixtureRuntimeStage.MARKET_EFFICIENCY
+    if run_structure:
+        return FixtureRuntimeStage.STRUCTURE
     if run_perception:
-        return FixtureRuntimeStage.PERCEPTION
+        return FixtureRuntimeStage.OBSERVATION_PACKAGE
     return FixtureRuntimeStage.MARKET_DATA
 
 
@@ -149,7 +166,9 @@ def _stage_reaches(
 ) -> bool:
     stage_order = (
         FixtureRuntimeStage.MARKET_DATA,
-        FixtureRuntimeStage.PERCEPTION,
+        FixtureRuntimeStage.OBSERVATION_PACKAGE,
+        FixtureRuntimeStage.STRUCTURE,
+        FixtureRuntimeStage.MARKET_EFFICIENCY,
         FixtureRuntimeStage.HYPOTHESIS,
         FixtureRuntimeStage.AGENT_STATE,
         FixtureRuntimeStage.SCENARIO_PROBABILITY,

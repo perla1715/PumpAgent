@@ -21,10 +21,7 @@ from pumpagent.runtime.domain.enums import (
     UncertaintyLevel,
 )
 from pumpagent.runtime.modules.market_data import add_market_snapshot_from_fixture
-from pumpagent.runtime.modules.perception import (
-    add_observation_package,
-    add_perception_evidence,
-)
+from pumpagent.runtime.modules.perception import add_observation_package
 from pumpagent.runtime.modules.structure import (
     StructureError,
     add_structural_evidence,
@@ -53,19 +50,6 @@ def make_event_with_observation_package() -> RuntimeEvent:
     return add_observation_package(event)
 
 
-def make_event_with_perception_evidence() -> RuntimeEvent:
-    event = RuntimeEvent(
-        event_id="runtime-evt-1",
-        schema_version="1.0",
-        cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
-        symbol="BTCUSDT",
-        exchange="binance",
-        timeframe="1m",
-    )
-    event = add_market_snapshot_from_fixture(event, FIXTURE)
-    return add_perception_evidence(event)
-
-
 def make_observation_package(
     *,
     event_id: str = "runtime-evt-1",
@@ -84,37 +68,32 @@ def make_observation_package(
 
 
 class StructureEngineTests(unittest.TestCase):
-    def test_structure_refines_perception_structural_evidence(self) -> None:
-        event = make_event_with_perception_evidence()
+    def test_structure_validates_specialized_structural_evidence(self) -> None:
+        event = add_structural_evidence(make_event_with_observation_package())
 
         evidence = refine_structural_evidence(event.structural_evidence)
 
         self.assertIsInstance(evidence, StructuralEvidence)
         self.assertIs(evidence, event.structural_evidence)
         self.assertEqual(evidence.event_id, event.event_id)
-        self.assertEqual(evidence.structural_bias, "not_assessed")
         self.assertEqual(
-            evidence.technical_context["source_snapshot_event_id"],
-            event.market_snapshot.event_id,
+            evidence.technical_context["source_observation_event_id"],
+            event.observation_package.event_id,
         )
 
-    def test_structure_can_run_after_perception_without_touching_other_sections(
+    def test_structure_preserves_valid_existing_structural_evidence(
         self,
     ) -> None:
-        event = make_event_with_perception_evidence()
+        event = add_structural_evidence(make_event_with_observation_package())
         snapshot_before = event.market_snapshot.to_dict()
-        efficiency_before = event.market_efficiency_evidence.to_dict()
 
         updated = add_structural_evidence(event)
 
         self.assertIsNot(updated, event)
         self.assertEqual(updated.market_snapshot.to_dict(), snapshot_before)
-        self.assertIsNone(updated.observation_package)
+        self.assertIs(updated.observation_package, event.observation_package)
         self.assertIs(updated.structural_evidence, event.structural_evidence)
-        self.assertEqual(
-            updated.market_efficiency_evidence.to_dict(),
-            efficiency_before,
-        )
+        self.assertIsNone(updated.market_efficiency_evidence)
         self.assertIsNone(updated.hypothesis_package)
         self.assertIsNone(updated.agent_state)
         self.assertIsNone(updated.scenario_probability)
@@ -122,10 +101,10 @@ class StructureEngineTests(unittest.TestCase):
         self.assertIsNone(updated.decision_alert)
         self.assertIsNone(updated.learning_metadata)
 
-    def test_structure_rejects_misaligned_perception_structural_evidence(
+    def test_structure_rejects_misaligned_external_structural_evidence(
         self,
     ) -> None:
-        event = make_event_with_perception_evidence()
+        event = add_structural_evidence(make_event_with_observation_package())
 
         with self.assertRaisesRegex(StructureError, "event_id"):
             refine_structural_evidence(

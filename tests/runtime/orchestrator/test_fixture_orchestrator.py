@@ -93,7 +93,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
                 fixture_path=FIXTURE,
             )
 
-    def test_orchestrator_can_run_market_data_to_perception(self) -> None:
+    def test_orchestrator_can_run_market_data_to_observation_package(self) -> None:
         market_data_only_event = self.run_cycle()
         original_snapshot = market_data_only_event.market_snapshot.to_dict()
 
@@ -108,10 +108,10 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertEqual(event.market_snapshot.to_dict(), original_snapshot)
-        self.assertIsNotNone(event.structural_evidence)
-        self.assertIsNotNone(event.market_efficiency_evidence)
+        self.assertIsNone(event.structural_evidence)
+        self.assertIsNone(event.market_efficiency_evidence)
         self.assertIsNone(event.hypothesis_package)
         self.assertIsNone(event.agent_state)
         self.assertIsNone(event.scenario_probability)
@@ -119,10 +119,25 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         self.assertIsNone(event.decision_alert)
         self.assertIsNone(event.learning_metadata)
 
-    def test_orchestrator_can_run_market_data_to_perception_to_structure(
+    def test_legacy_perception_target_selects_observation_only(self) -> None:
+        event = run_fixture_market_data_cycle(
+            event_id="runtime-evt-1",
+            cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            symbol="BTCUSDT",
+            exchange="binance",
+            timeframe="1m",
+            fixture_path=FIXTURE,
+            target_stage="perception",
+        )
+
+        self.assertIsNotNone(event.observation_package)
+        self.assertIsNone(event.structural_evidence)
+        self.assertIsNone(event.market_efficiency_evidence)
+
+    def test_orchestrator_can_run_market_data_to_observation_to_structure(
         self,
     ) -> None:
-        perception_event = run_fixture_market_data_cycle(
+        observation_event = run_fixture_market_data_cycle(
             event_id="runtime-evt-1",
             cycle_timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
             symbol="BTCUSDT",
@@ -131,9 +146,8 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
             fixture_path=FIXTURE,
             run_perception=True,
         )
-        original_snapshot = perception_event.market_snapshot.to_dict()
-        original_structure = perception_event.structural_evidence.to_dict()
-        original_efficiency = perception_event.market_efficiency_evidence.to_dict()
+        original_snapshot = observation_event.market_snapshot.to_dict()
+        original_observation = observation_event.observation_package.to_dict()
 
         event = run_fixture_market_data_cycle(
             event_id="runtime-evt-1",
@@ -146,15 +160,11 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
-        self.assertIsNotNone(event.market_efficiency_evidence)
+        self.assertIsNone(event.market_efficiency_evidence)
         self.assertEqual(event.market_snapshot.to_dict(), original_snapshot)
-        self.assertEqual(event.structural_evidence.to_dict(), original_structure)
-        self.assertEqual(
-            event.market_efficiency_evidence.to_dict(),
-            original_efficiency,
-        )
+        self.assertEqual(event.observation_package.to_dict(), original_observation)
         self.assertEqual(event.structural_evidence.structural_bias, "not_assessed")
         self.assertIsNone(event.hypothesis_package)
         self.assertIsNone(event.agent_state)
@@ -175,7 +185,6 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
         original_snapshot = structure_event.market_snapshot.to_dict()
         original_structure = structure_event.structural_evidence.to_dict()
-        original_efficiency = structure_event.market_efficiency_evidence.to_dict()
 
         event = run_fixture_market_data_cycle(
             event_id="runtime-evt-1",
@@ -188,15 +197,11 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertEqual(event.market_snapshot.to_dict(), original_snapshot)
         self.assertEqual(event.structural_evidence.to_dict(), original_structure)
-        self.assertEqual(
-            event.market_efficiency_evidence.to_dict(),
-            original_efficiency,
-        )
         self.assertEqual(
             event.market_efficiency_evidence.participation_direction,
             "not_assessed",
@@ -237,7 +242,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -284,7 +289,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -330,7 +335,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -381,7 +386,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
@@ -434,7 +439,7 @@ class FixtureRuntimeOrchestratorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(event.market_snapshot)
-        self.assertIsNone(event.observation_package)
+        self.assertIsNotNone(event.observation_package)
         self.assertIsNotNone(event.structural_evidence)
         self.assertIsNotNone(event.market_efficiency_evidence)
         self.assertIsNotNone(event.hypothesis_package)
