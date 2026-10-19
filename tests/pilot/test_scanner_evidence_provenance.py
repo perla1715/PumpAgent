@@ -65,6 +65,7 @@ def test_evaluable_evidence_is_deterministic_and_replays_through_canonical_evalu
         artifact = json.loads((package / result["entries"][0]["evidence_reference"]).read_text())
         assert artifact["candles"][0]["closed"] is True
         assert artifact["coverage"]["admissible_closed_bucket_count"] == 21
+        assert artifact["rank_snapshot"]["resolution"] == {"state": "RESOLVED_GT50", "method": "NORMALIZED_TICKER_EXACT", "reason": None}
         assert "test-key" not in json.dumps(artifact)
         assert "15_STAGE1_EVIDENCE_INDEX.json" in (package / "MANIFEST.sha256").read_text()
         assert "stage1_evidence/ALPHAUSDT.json" in (package / "MANIFEST.sha256").read_text()

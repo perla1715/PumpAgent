@@ -29,7 +29,8 @@ def evidence_payload(
     rank_snapshot: RankSnapshot,
 ) -> dict[str, Any]:
     """Serialize exact normalized stage-one evidence and its coverage facts."""
-    entry, _ = rank_snapshot.resolve(record.symbol[:-4])
+    resolution = rank_snapshot.resolution_for(record.symbol[:-4])
+    entry = resolution.entry
     candles = []
     if record.batch is not None:
         candles = [
@@ -67,10 +68,16 @@ def evidence_payload(
         },
         "rank_snapshot": {
             "source": rank_snapshot.source,
+            "coverage_complete": rank_snapshot.coverage_complete,
+            "page_count": rank_snapshot.page_count,
+            "endpoint_pages": list(rank_snapshot.endpoint_pages),
             "fetched_at_utc": _iso(rank_snapshot.fetched_at),
             "snapshot_id": rank_snapshot.snapshot_id,
             "resolved_entry": None if entry is None else {
                 "asset_id": entry.asset_id, "symbol": entry.symbol, "rank": entry.rank,
+            },
+            "resolution": {
+                "state": resolution.state, "method": resolution.method, "reason": resolution.reason,
             },
         },
         "candles": candles,
