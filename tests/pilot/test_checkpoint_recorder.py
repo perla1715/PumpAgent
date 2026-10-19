@@ -199,10 +199,13 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
                "json", "math", "os", "pathlib", "re", "stat", "tempfile", "typing"}
     allowed_project_imports = {
         "pumpagent.live_data.adapters.market_cap_rank",
+        "pumpagent.live_data.adapters.bybit_public_market",
+        "pumpagent.live_data.adapters.coinalyze_pilot_price",
         "pumpagent.live_data.domain",
         "pumpagent.live_data.validation.validator",
         "pumpagent.pilot.pilot_search_profile",
         "pumpagent.pilot.runtime_handoff",
+        "pumpagent.pilot.shadow_admission",
         "pumpagent.runtime.domain",
         "pumpagent.runtime.domain.enums",
         "pumpagent.runtime.domain.observation_episode",
