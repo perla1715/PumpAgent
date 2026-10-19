@@ -71,6 +71,11 @@ def evidence_payload(
             "coverage_complete": rank_snapshot.coverage_complete,
             "page_count": rank_snapshot.page_count,
             "endpoint_pages": list(rank_snapshot.endpoint_pages),
+            "global_catalog_complete": rank_snapshot.global_catalog_complete,
+            "target_universe_sufficient": rank_snapshot.target_universe_sufficient,
+            "acquisition_stop_condition": rank_snapshot.acquisition_stop_condition,
+            "target_resolution_counts": dict(rank_snapshot.target_resolution_counts),
+            "endpoints": list(rank_snapshot.endpoints),
             "fetched_at_utc": _iso(rank_snapshot.fetched_at),
             "snapshot_id": rank_snapshot.snapshot_id,
             "resolved_entry": None if entry is None else {

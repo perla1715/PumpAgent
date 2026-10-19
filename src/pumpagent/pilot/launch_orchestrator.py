@@ -137,9 +137,17 @@ class FirstShadowPilotLaunchOrchestrator:
         """Run Phase A only; no runtime snapshot is fabricated or reused."""
         requested_evaluation = _utc(evaluation_timestamp_utc or self.clock())
         try:
-            rank_snapshot = self.rank_source.fetch()
             instruments = _instrument_rows(self.instruments_loader())
             tickers = _ticker_map(self.tickers_loader())
+            targets = tuple(sorted({
+                str(row.get("symbol", "")).upper()[:-4]
+                for row in instruments
+                if str(row.get("symbol", "")).upper().endswith("USDT")
+                and row.get("status") == "Trading"
+                and str(row.get("symbol", "")).upper() in tickers
+            }))
+            target_fetch = getattr(self.rank_source, "fetch_for_underlyings", None)
+            rank_snapshot = target_fetch(targets) if callable(target_fetch) else self.rank_source.fetch()
         except Exception as exc:
             return FirstShadowPilotLaunchResult(LaunchStatus.DISCOVERY_FAILED, _reason(exc))
         # The final boundary is frozen only after the rank source has supplied
