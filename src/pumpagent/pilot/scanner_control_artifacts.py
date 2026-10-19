@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+from pumpagent.pilot.runtime_handoff import PilotDiscoveryPreparation
+from pumpagent.pilot.scanner_evidence_provenance import write_stage_one_evidence_bundle
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,7 @@ class ControlArtifactResult:
     status: str
     near_misses: tuple[Mapping[str, Any], ...]
     error: str | None = None
+    stage1_evidence_bundle: Mapping[str, Any] | None = None
 
 
 def deterministic_near_misses(
@@ -81,13 +86,19 @@ def generate_control_artifacts(
     rows: Sequence[Mapping[str, Any]],
     *,
     near_miss_writer: Callable[[tuple[Mapping[str, Any], ...]], None] | None = None,
+    discovery_preparation: PilotDiscoveryPreparation | None = None,
+    package_directory: str | Path | None = None,
 ) -> ControlArtifactResult:
     """Generate optional diagnostics without losing the captured scanner result."""
     try:
         near_misses = deterministic_near_misses(rows)
         if near_miss_writer is not None:
             near_miss_writer(near_misses)
-        return ControlArtifactResult(authoritative, "COMPLETE", near_misses)
+        if (discovery_preparation is None) != (package_directory is None):
+            raise ValueError("discovery preparation and package directory must be supplied together")
+        bundle = (write_stage_one_evidence_bundle(package_directory, discovery_preparation)
+                  if discovery_preparation is not None else None)
+        return ControlArtifactResult(authoritative, "COMPLETE", near_misses, stage1_evidence_bundle=bundle)
     except Exception as exc:
         return ControlArtifactResult(
             authoritative=authoritative,

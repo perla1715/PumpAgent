@@ -52,6 +52,44 @@ class CandidateEvidenceFailure:
 
 
 @dataclass(frozen=True)
+class NativeEvidenceCoverage:
+    """Frozen 1m coverage facts; they do not affect profile semantics."""
+
+    requested_start_utc: datetime
+    evaluation_timestamp_utc: datetime
+    returned_record_count: int
+    admissible_closed_bucket_count: int
+    expected_required_bucket_count: int
+    first_admissible_bucket_utc: datetime | None
+    last_admissible_bucket_utc: datetime | None
+    missing_bucket_timestamps_utc: tuple[datetime, ...]
+    complete_for_profile: bool
+    raw_source_identity: str | None = None
+    raw_sha256: str | None = None
+
+
+class NativeEvidenceUnavailableError(PilotRuntimeInputError):
+    """Candidate-local source outcome with structured frozen coverage facts."""
+
+    def __init__(self, message: str, coverage: NativeEvidenceCoverage, provider_symbol: str | None = None) -> None:
+        super().__init__(message)
+        self.coverage = coverage
+        self.provider_symbol = provider_symbol
+
+
+@dataclass(frozen=True)
+class StageOneEvidenceRecord:
+    """Exact normalized 1m evidence or structured local absence for one symbol."""
+
+    symbol: str
+    provider_symbol: str | None
+    coverage: NativeEvidenceCoverage
+    batch: "NativeCandleBatch | None"
+    terminal_state: str
+    failure_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class CandidateStageOneScreen:
     """Exact 1m canonical profile result before 5m final-evidence acquisition."""
 
@@ -78,6 +116,8 @@ class PilotDiscoveryPreparation:
     cohort_collection_completed_at_utc: datetime | None = None
     cohort_collection_duration_seconds: float | None = None
     eligible_symbols: tuple[str, ...] = ()
+    rank_snapshot: RankSnapshot | None = None
+    stage1_evidence: tuple[StageOneEvidenceRecord, ...] = ()
 
     @property
     def full_universe_evaluation_complete(self) -> bool:
@@ -253,6 +293,7 @@ class PilotRuntimeInputAssembler:
         failures: list[CandidateEvidenceFailure] = []
         non_survivors: list[CandidateStageOneScreen] = []
         survivors: list[CandidateStageOneScreen] = []
+        stage1_evidence: list[StageOneEvidenceRecord] = []
         resolution_snapshot = self._begin_market_resolution_cycle() if eligible else None
         try:
             for instrument in eligible:
@@ -263,7 +304,11 @@ class PilotRuntimeInputAssembler:
                     if failure is None:
                         raise
                     failures.append(failure)
+                    record = _stage1_record_from_error(instrument.symbol, exc, evaluation)
+                    if record is not None:
+                        stage1_evidence.append(record)
                     continue
+                stage1_evidence.append(_stage1_record_from_screen(screen, evaluation))
                 if not screen.profile.qualifies:
                     non_survivors.append(screen)
                     continue
@@ -290,6 +335,8 @@ class PilotRuntimeInputAssembler:
             cohort_collection_completed_at_utc=collection_completed,
             cohort_collection_duration_seconds=max(0.0, (collection_completed - collection_started).total_seconds()),
             eligible_symbols=tuple(instrument.symbol for instrument in eligible),
+            rank_snapshot=rank_snapshot,
+            stage1_evidence=tuple(stage1_evidence),
         )
 
     def _cohort_utc_now(self) -> datetime:
@@ -321,8 +368,14 @@ class PilotRuntimeInputAssembler:
             raise
         if not isinstance(provider_symbol, str) or not provider_symbol.strip():
             raise PilotRuntimeInputError("Coinalyze provider symbol is unresolved")
-        one = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "1m", evaluation)
-        _validate_one_minute_batch(instrument, provider_symbol, one, evaluation)
+        try:
+            one = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "1m", evaluation)
+        except NativeEvidenceUnavailableError as exc:
+            raise NativeEvidenceUnavailableError(str(exc), exc.coverage, provider_symbol) from exc
+        try:
+            _validate_one_minute_batch(instrument, provider_symbol, one, evaluation)
+        except PilotRuntimeInputError as exc:
+            raise NativeEvidenceUnavailableError(str(exc), _coverage_from_batch(one, evaluation), provider_symbol) from exc
         observations = tuple(PriceObservation(row.timestamp_utc, row.close) for row in one.candles)
         profile = evaluate_canonical_profile(
             symbol=instrument.symbol, observations=observations,
@@ -412,6 +465,78 @@ def eligible_instruments(
             continue
         values[symbol] = EligibleInstrument(symbol, metadata)
     return tuple(values[symbol] for symbol in sorted(values))
+
+
+def _coverage_from_batch(batch: NativeCandleBatch, evaluation: datetime) -> NativeEvidenceCoverage:
+    evaluation = _utc(evaluation)
+    admissible = tuple(candle for candle in batch.candles if candle.closed and _utc(candle.timestamp_utc) <= evaluation)
+    stamps = tuple(_utc(candle.timestamp_utc) for candle in admissible)
+    missing: list[datetime] = []
+    for earlier, later in zip(stamps, stamps[1:]):
+        cursor = earlier + timedelta(minutes=1)
+        while cursor < later:
+            missing.append(cursor)
+            cursor += timedelta(minutes=1)
+    required_start = evaluation - WINDOW
+    complete = len(admissible) >= 20 and bool(stamps) and stamps[0] <= required_start
+    return NativeEvidenceCoverage(
+        requested_start_utc=required_start,
+        evaluation_timestamp_utc=evaluation,
+        returned_record_count=len(batch.candles),
+        admissible_closed_bucket_count=len(admissible),
+        expected_required_bucket_count=20,
+        first_admissible_bucket_utc=stamps[0] if stamps else None,
+        last_admissible_bucket_utc=stamps[-1] if stamps else None,
+        missing_bucket_timestamps_utc=tuple(missing),
+        complete_for_profile=complete,
+        raw_source_identity=batch.raw_source_identity,
+        raw_sha256=batch.raw_sha256,
+    )
+
+
+def _stage1_record_from_screen(screen: CandidateStageOneScreen, evaluation: datetime) -> StageOneEvidenceRecord:
+    return StageOneEvidenceRecord(
+        symbol=screen.instrument.symbol,
+        provider_symbol=screen.provider_symbol,
+        coverage=_coverage_from_batch(screen.one_minute, evaluation),
+        batch=screen.one_minute,
+        terminal_state="STAGE1_PROFILE_SURVIVOR" if screen.profile.qualifies else "STAGE1_PROFILE_NON_SURVIVOR",
+    )
+
+
+def _stage1_record_from_error(symbol: str, exc: PilotRuntimeInputError, evaluation: datetime) -> StageOneEvidenceRecord | None:
+    if isinstance(exc, NativeEvidenceUnavailableError):
+        return StageOneEvidenceRecord(symbol, exc.provider_symbol, exc.coverage, None, "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE", str(exc))
+    if isinstance(exc, _CandidateLocalAssemblyError):
+        boundary = _utc(evaluation)
+        coverage = NativeEvidenceCoverage(
+            requested_start_utc=boundary - WINDOW,
+            evaluation_timestamp_utc=boundary,
+            returned_record_count=0,
+            admissible_closed_bucket_count=0,
+            expected_required_bucket_count=20,
+            first_admissible_bucket_utc=None,
+            last_admissible_bucket_utc=None,
+            missing_bucket_timestamps_utc=(),
+            complete_for_profile=False,
+        )
+        return StageOneEvidenceRecord(symbol, None, coverage, None, exc.classification, str(exc))
+    failure = _candidate_local_failure(symbol, exc)
+    if failure is not None:
+        boundary = _utc(evaluation)
+        coverage = NativeEvidenceCoverage(
+            requested_start_utc=boundary - WINDOW,
+            evaluation_timestamp_utc=boundary,
+            returned_record_count=0,
+            admissible_closed_bucket_count=0,
+            expected_required_bucket_count=20,
+            first_admissible_bucket_utc=None,
+            last_admissible_bucket_utc=None,
+            missing_bucket_timestamps_utc=(),
+            complete_for_profile=False,
+        )
+        return StageOneEvidenceRecord(symbol, None, coverage, None, failure.classification, str(exc))
+    return None
 
 
 def _validate_one_minute_batch(instrument: EligibleInstrument, provider_symbol: str, one: NativeCandleBatch, evaluation: datetime) -> None:

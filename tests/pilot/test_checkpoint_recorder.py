@@ -205,6 +205,7 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
         "pumpagent.live_data.validation.validator",
         "pumpagent.pilot.pilot_search_profile",
         "pumpagent.pilot.cohort_rate_budget",
+        "pumpagent.pilot.scanner_evidence_provenance",
         "pumpagent.pilot.runtime_handoff",
         "pumpagent.pilot.shadow_admission",
         "pumpagent.runtime.domain",

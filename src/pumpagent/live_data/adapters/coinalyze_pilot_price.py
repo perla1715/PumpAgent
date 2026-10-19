@@ -10,7 +10,10 @@ import socket
 from typing import Any, Callable
 from urllib import error, parse, request
 
-from pumpagent.pilot.runtime_handoff import NativeCandle, NativeCandleBatch, PilotRuntimeInputError
+from pumpagent.pilot.runtime_handoff import (
+    NativeCandle, NativeCandleBatch, NativeEvidenceCoverage, NativeEvidenceUnavailableError,
+    PilotRuntimeInputError, WINDOW,
+)
 
 COINALYZE_BASE_URL = "https://api.coinalyze.net/v1"
 _INTERVALS = {"1m": ("1min", 60), "5m": ("5min", 300)}
@@ -113,10 +116,29 @@ class CoinalyzeNativePilotPriceClient:
                 ))
             except (KeyError, TypeError, ValueError) as exc:
                 raise PilotRuntimeInputError(f"invalid native Coinalyze {timeframe} candle") from exc
+        source_identity = f"coinalyze:/ohlcv-history:{provider_symbol}:{interval}:{int(start.timestamp())}:{int(evaluation.timestamp())}"
+        ordered = tuple(sorted(candles, key=lambda item: item.timestamp_utc))
+        if not ordered:
+            coverage = NativeEvidenceCoverage(
+                requested_start_utc=evaluation - WINDOW,
+                evaluation_timestamp_utc=evaluation,
+                returned_record_count=len(_history(payload, provider_symbol)),
+                admissible_closed_bucket_count=0,
+                expected_required_bucket_count=20,
+                first_admissible_bucket_utc=None,
+                last_admissible_bucket_utc=None,
+                missing_bucket_timestamps_utc=(),
+                complete_for_profile=False,
+                raw_source_identity=source_identity,
+                raw_sha256=hashlib.sha256(raw).hexdigest(),
+            )
+            raise NativeEvidenceUnavailableError(
+                f"insufficient native closed {timeframe} evidence for the rolling 20-minute profile", coverage, provider_symbol,
+            )
         return NativeCandleBatch(
             bybit_symbol=bybit_symbol.upper(), provider_symbol=provider_symbol,
-            timeframe=timeframe, candles=tuple(sorted(candles, key=lambda item: item.timestamp_utc)),
-            raw_source_identity=f"coinalyze:/ohlcv-history:{provider_symbol}:{interval}:{int(start.timestamp())}:{int(evaluation.timestamp())}",
+            timeframe=timeframe, candles=ordered,
+            raw_source_identity=source_identity,
             raw_sha256=hashlib.sha256(raw).hexdigest(),
         )
 
