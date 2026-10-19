@@ -44,6 +44,26 @@ class FakeCoinalyze:
         return NativeCandleBatch(bybit_symbol, provider_symbol, timeframe, candles, f"raw:{bybit_symbol}:{timeframe}", DIGEST)
 
 
+class PartialCoinalyze(FakeCoinalyze):
+    def __init__(self, series, *, insufficient=(), unresolved=(), systemic=None):
+        super().__init__(series)
+        self.insufficient, self.unresolved, self.systemic = set(insufficient), set(unresolved), systemic
+
+    def resolve_bybit_symbol(self, symbol: str) -> str:
+        if self.systemic:
+            raise PilotRuntimeInputError(self.systemic)
+        if symbol in self.unresolved:
+            raise PilotRuntimeInputError(f"No Coinalyze Bybit perpetual mapping for {symbol}")
+        return super().resolve_bybit_symbol(symbol)
+
+    def fetch_closed_native(self, *, bybit_symbol: str, provider_symbol: str, timeframe: str, evaluation_timestamp_utc: datetime) -> NativeCandleBatch:
+        if self.systemic:
+            raise PilotRuntimeInputError(self.systemic)
+        if (bybit_symbol, timeframe) in self.insufficient:
+            raise PilotRuntimeInputError(f"insufficient native closed {timeframe} evidence for the rolling 20-minute profile")
+        return super().fetch_closed_native(bybit_symbol=bybit_symbol, provider_symbol=provider_symbol, timeframe=timeframe, evaluation_timestamp_utc=evaluation_timestamp_utc)
+
+
 class TamperedJournal(PilotAdmissionEvidenceJournal):
     def verify(self):  # type: ignore[override]
         records = super().verify()
@@ -137,6 +157,53 @@ class PilotRuntimeHandoffTests(unittest.TestCase):
         source = FakeCoinalyze({"ALPHAUSDT": tuple([100.0] * 21)})
         with self.assertRaisesRegex(PilotRuntimeInputError, "no candidate passed"):
             PilotRuntimeInputAssembler(source, PilotAdmissionEvidenceJournal(Path(root.name) / "empty")).prepare(rank_snapshot=ranks(ALPHA=75), instruments=instruments("ALPHAUSDT"), tickers={"ALPHAUSDT": {}}, evaluation_timestamp_utc=NOW)
+
+    def test_candidate_local_insufficient_or_unresolved_symbols_do_not_stop_universe(self):
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        source = PartialCoinalyze(self.series, insufficient={("ALPHAUSDT", "1m")}, unresolved={"GAMMAUSDT"})
+        assembler = PilotRuntimeInputAssembler(source, PilotAdmissionEvidenceJournal(Path(root.name) / "journal"))
+        preparation = assembler.prepare_discovery(
+            rank_snapshot=ranks(ALPHA=75, BETA=76, GAMMA=77),
+            instruments=instruments("ALPHAUSDT", "BETAUSDT", "GAMMAUSDT"),
+            tickers={"ALPHAUSDT": {}, "BETAUSDT": {}, "GAMMAUSDT": {}}, evaluation_timestamp_utc=NOW,
+        )
+        self.assertEqual([candidate.symbol for candidate in preparation.candidates], ["BETAUSDT"])
+        self.assertTrue(preparation.full_universe_evaluation_complete)
+        self.assertEqual([(failure.symbol, failure.classification) for failure in preparation.candidate_failures], [
+            ("ALPHAUSDT", "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE"),
+            ("GAMMAUSDT", "CANDIDATE_LOCAL_PROVIDER_SYMBOL_UNAVAILABLE"),
+        ])
+        self.assertFalse(preparation.selection.winner is None)
+
+    def test_systemic_provider_failure_remains_terminal(self):
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        source = PartialCoinalyze(self.series, systemic="Coinalyze HTTP 401 from /future-markets")
+        assembler = PilotRuntimeInputAssembler(source, PilotAdmissionEvidenceJournal(Path(root.name) / "journal"))
+        with self.assertRaisesRegex(PilotRuntimeInputError, "HTTP 401"):
+            assembler.prepare_discovery(rank_snapshot=ranks(ALPHA=75, BETA=76), instruments=instruments("ALPHAUSDT", "BETAUSDT"), tickers={"ALPHAUSDT": {}, "BETAUSDT": {}}, evaluation_timestamp_utc=NOW)
+
+    def test_insufficient_5m_is_candidate_local_and_does_not_create_profile_failure(self):
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        source = PartialCoinalyze(self.series, insufficient={("ALPHAUSDT", "5m")})
+        preparation = PilotRuntimeInputAssembler(source, PilotAdmissionEvidenceJournal(Path(root.name) / "journal")).prepare_discovery(
+            rank_snapshot=ranks(ALPHA=75, BETA=76), instruments=instruments("ALPHAUSDT", "BETAUSDT"),
+            tickers={"ALPHAUSDT": {}, "BETAUSDT": {}}, evaluation_timestamp_utc=NOW,
+        )
+        self.assertEqual([failure.symbol for failure in preparation.candidate_failures], ["ALPHAUSDT"])
+        self.assertEqual(preparation.candidate_failures[0].stage, "native_5m_evidence")
+        self.assertEqual([candidate.symbol for candidate in preparation.candidates], ["BETAUSDT"])
+
+    def test_all_local_insufficiencies_complete_without_profile_gate_counts(self):
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        source = PartialCoinalyze(self.series, insufficient={("ALPHAUSDT", "1m"), ("BETAUSDT", "1m")})
+        preparation = PilotRuntimeInputAssembler(source, PilotAdmissionEvidenceJournal(Path(root.name) / "journal")).prepare_discovery(
+            rank_snapshot=ranks(ALPHA=75, BETA=76), instruments=instruments("ALPHAUSDT", "BETAUSDT"),
+            tickers={"ALPHAUSDT": {}, "BETAUSDT": {}}, evaluation_timestamp_utc=NOW,
+        )
+        self.assertTrue(preparation.full_universe_evaluation_complete)
+        self.assertEqual(preparation.candidates, ())
+        self.assertEqual(preparation.selection.evaluations, ())
+        self.assertEqual(len(preparation.candidate_failures), 2)
 
     def test_legacy_admission_and_shadow_runtime_are_not_called_and_manifest_stays_unchanged(self):
         import inspect

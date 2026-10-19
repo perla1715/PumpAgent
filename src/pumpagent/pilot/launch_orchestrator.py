@@ -22,6 +22,7 @@ from pumpagent.pilot.runtime_handoff import (
     CoinalyzePilotPriceSource,
     GuardedPreAdmissionHandoff,
     NativeCandleBatch,
+    PilotDiscoveryPreparation,
     PilotRuntimeInputAssembler,
     PilotRuntimeInputError,
 )
@@ -62,6 +63,7 @@ class FirstShadowPilotLaunchResult:
     runtime_cycle: ObservationRuntimeCycleResult | None = None
     manifest_transition_required: bool = False
     manifest_transition_action: str | None = None
+    discovery_preparation: PilotDiscoveryPreparation | None = None
 
     def __post_init__(self) -> None:
         if self.status is LaunchStatus.ADMITTED_WAITING_FOR_FRESH_SNAPSHOT and self.admission is None:
@@ -127,34 +129,63 @@ class FirstShadowPilotLaunchOrchestrator:
         self, *, evaluation_timestamp_utc: datetime | None = None
     ) -> FirstShadowPilotLaunchResult:
         """Run Phase A only; no runtime snapshot is fabricated or reused."""
-        evaluation = _utc(evaluation_timestamp_utc or self.clock())
+        requested_evaluation = _utc(evaluation_timestamp_utc or self.clock())
         try:
             rank_snapshot = self.rank_source.fetch()
             instruments = _instrument_rows(self.instruments_loader())
             tickers = _ticker_map(self.tickers_loader())
         except Exception as exc:
             return FirstShadowPilotLaunchResult(LaunchStatus.DISCOVERY_FAILED, _reason(exc))
+        # The final boundary is frozen only after the rank source has supplied
+        # its own point-in-time timestamp.  A rank snapshot genuinely later
+        # than the post-fetch clock remains invalid rather than being backdated.
+        post_fetch_clock = _utc(self.clock())
+        rank_fetched = _utc(rank_snapshot.fetched_at)
+        if requested_evaluation > post_fetch_clock:
+            return FirstShadowPilotLaunchResult(
+                LaunchStatus.DISCOVERY_FAILED,
+                "requested evaluation timestamp is later than the discovery evaluation boundary",
+            )
+        if rank_fetched > post_fetch_clock:
+            return FirstShadowPilotLaunchResult(
+                LaunchStatus.DISCOVERY_FAILED,
+                "rank snapshot timestamp is later than the discovery evaluation boundary",
+            )
+        evaluation = max(requested_evaluation, post_fetch_clock, rank_fetched)
         try:
-            handoff = PilotRuntimeInputAssembler(self.price_source, self.journal).prepare(
+            assembler = PilotRuntimeInputAssembler(self.price_source, self.journal)
+            preparation = assembler.prepare_discovery(
                 rank_snapshot=rank_snapshot,
                 instruments=instruments,
                 tickers=tickers,
                 evaluation_timestamp_utc=evaluation,
             )
+            if preparation.eligible_count == 0:
+                return FirstShadowPilotLaunchResult(
+                    LaunchStatus.EVIDENCE_ASSEMBLY_FAILED,
+                    "no current non-Top-50 eligible instruments are available",
+                    discovery_preparation=preparation,
+                )
+            if preparation.selection.winner is None:
+                return FirstShadowPilotLaunchResult(
+                    LaunchStatus.NO_QUALIFYING_CANDIDATE,
+                    "no candidate passed the accepted Pilot Search Profile",
+                    discovery_preparation=preparation,
+                )
+            handoff = assembler.handoff_for_selection(preparation.selection)
         except PilotRuntimeInputError as exc:
-            if "no candidate passed" in str(exc):
-                return FirstShadowPilotLaunchResult(LaunchStatus.NO_QUALIFYING_CANDIDATE, str(exc))
             return FirstShadowPilotLaunchResult(LaunchStatus.EVIDENCE_ASSEMBLY_FAILED, str(exc))
         except Exception as exc:
             return FirstShadowPilotLaunchResult(LaunchStatus.EVIDENCE_ASSEMBLY_FAILED, _reason(exc))
-        return self.admit_verified_handoff(handoff, admission_timestamp_utc=evaluation)
+        return self.admit_verified_handoff(handoff, admission_timestamp_utc=evaluation, discovery_preparation=preparation)
 
     def admit_verified_handoff(
-        self, handoff: GuardedPreAdmissionHandoff, *, admission_timestamp_utc: datetime | None = None
+        self, handoff: GuardedPreAdmissionHandoff, *, admission_timestamp_utc: datetime | None = None,
+        discovery_preparation: PilotDiscoveryPreparation | None = None,
     ) -> FirstShadowPilotLaunchResult:
         """Consume one verified handoff exactly once through canonical admission."""
         if handoff.journal_record_digest in self._admitted_journal_digests:
-            return FirstShadowPilotLaunchResult(LaunchStatus.ADMISSION_FAILED, "verified handoff was already admitted", handoff=handoff)
+            return FirstShadowPilotLaunchResult(LaunchStatus.ADMISSION_FAILED, "verified handoff was already admitted", handoff=handoff, discovery_preparation=discovery_preparation)
         try:
             admission = admit_guarded_handoff(
                 handoff, self.journal, self.watchlist,
@@ -163,7 +194,7 @@ class FirstShadowPilotLaunchOrchestrator:
         except ShadowPilotAdmissionError as exc:
             status = (LaunchStatus.PRE_ADMISSION_VERIFICATION_FAILED if "journal" in str(exc).lower() or "provenance" in str(exc).lower()
                       else LaunchStatus.ADMISSION_FAILED)
-            return FirstShadowPilotLaunchResult(status, str(exc), handoff=handoff)
+            return FirstShadowPilotLaunchResult(status, str(exc), handoff=handoff, discovery_preparation=discovery_preparation)
         self._admitted_journal_digests.add(handoff.journal_record_digest)
         return FirstShadowPilotLaunchResult(
             LaunchStatus.ADMITTED_WAITING_FOR_FRESH_SNAPSHOT,
@@ -175,6 +206,7 @@ class FirstShadowPilotLaunchOrchestrator:
                 "At real launch, append a provenance-preserving superseding Case Manifest record; "
                 "do not overwrite PILOT_EVENT_001 historical fields."
             ),
+            discovery_preparation=discovery_preparation,
         )
 
     def continue_once(

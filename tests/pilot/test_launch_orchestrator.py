@@ -12,7 +12,7 @@ from pumpagent.pilot.launch_orchestrator import (
     build_fresh_coinalyze_5m_snapshot,
 )
 from pumpagent.pilot.pilot_search_profile import PilotAdmissionEvidenceJournal
-from pumpagent.pilot.runtime_handoff import NativeCandle, NativeCandleBatch, PilotRuntimeInputAssembler
+from pumpagent.pilot.runtime_handoff import NativeCandle, NativeCandleBatch, PilotRuntimeInputAssembler, PilotRuntimeInputError
 from pumpagent.runtime.modules.watchlist.manager import WatchlistManager
 from pumpagent.runtime.orchestrator.runtime_loop import RuntimeOrchestrator
 
@@ -37,6 +37,14 @@ class FailingRanks:
         raise RuntimeError("rank transport unavailable")
 
 
+class FixedRanks:
+    def __init__(self, fetched_at, **values):
+        self.snapshot = RankSnapshot("COINGECKO_MARKET_CAP_DESC", fetched_at, tuple(RankEntry(name.lower(), name, rank) for name, rank in values.items()), "rank-fixture")
+
+    def fetch(self):
+        return self.snapshot
+
+
 class FakeCoinalyze:
     def __init__(self, values: dict[str, tuple[float, ...]], *, fail: bool = False) -> None:
         self.values, self.fail = values, fail
@@ -57,6 +65,13 @@ class FakeCoinalyze:
             closes = (values[-1] - 2.0, values[-1] - 1.0, values[-1])
             candles = tuple(NativeCandle(evaluation_timestamp_utc - timedelta(minutes=15 - i * 5), close, close, close, close, 1.0, "5m", True) for i, close in enumerate(closes))
         return NativeCandleBatch(bybit_symbol, provider_symbol, timeframe, candles, f"raw:{bybit_symbol}:{timeframe}:{int(evaluation_timestamp_utc.timestamp())}", DIGEST)
+
+
+class LocallyInsufficientCoinalyze(FakeCoinalyze):
+    def fetch_closed_native(self, *, bybit_symbol, provider_symbol, timeframe, evaluation_timestamp_utc):
+        if bybit_symbol == "ALPHAUSDT" and timeframe == "1m":
+            raise PilotRuntimeInputError("insufficient native closed 1m evidence for the rolling 20-minute profile")
+        return super().fetch_closed_native(bybit_symbol=bybit_symbol, provider_symbol=provider_symbol, timeframe=timeframe, evaluation_timestamp_utc=evaluation_timestamp_utc)
 
 
 class LaunchOrchestratorTests(unittest.TestCase):
@@ -95,6 +110,36 @@ class LaunchOrchestratorTests(unittest.TestCase):
         self.assertIs(result.status, LaunchStatus.NO_QUALIFYING_CANDIDATE)
         self.assertIsNone(result.admission)
         self.assertEqual(owner.watchlist.list_active(), ())
+
+    def test_full_universe_with_local_insufficiency_and_nonqualifier_is_no_candidate(self):
+        source = LocallyInsufficientCoinalyze({"ALPHAUSDT": tuple([100.0] * 21), "BETAUSDT": tuple([100.0] * 21)})
+        owner, _, _ = self.make_owner(ranks=Ranks(ALPHA=75, BETA=76), source=source, symbols=("ALPHAUSDT", "BETAUSDT"))
+        result = owner.discover_and_admit(evaluation_timestamp_utc=NOW)
+        self.assertIs(result.status, LaunchStatus.NO_QUALIFYING_CANDIDATE)
+        assert result.discovery_preparation is not None
+        self.assertTrue(result.discovery_preparation.full_universe_evaluation_complete)
+        self.assertEqual(len(result.discovery_preparation.candidate_failures), 1)
+        self.assertEqual(len(result.discovery_preparation.selection.evaluations), 1)
+
+    def test_rank_fetched_during_discovery_is_not_false_future_relative_to_requested_time(self):
+        owner, _, _ = self.make_owner(ranks=FixedRanks(NOW, ALPHA=75))
+        result = owner.discover_and_admit(evaluation_timestamp_utc=NOW - timedelta(seconds=1))
+        self.assertIs(result.status, LaunchStatus.ADMITTED_WAITING_FOR_FRESH_SNAPSHOT)
+        self.assertIsNotNone(result.discovery_preparation)
+        self.assertTrue(result.discovery_preparation.full_universe_evaluation_complete)
+
+    def test_genuinely_future_rank_snapshot_remains_terminal(self):
+        owner, _, _ = self.make_owner(ranks=FixedRanks(NOW + timedelta(minutes=1), ALPHA=75))
+        result = owner.discover_and_admit(evaluation_timestamp_utc=NOW)
+        self.assertIs(result.status, LaunchStatus.DISCOVERY_FAILED)
+        self.assertIn("later than", result.reason)
+
+    def test_stale_rank_snapshot_remains_not_qualifying(self):
+        owner, _, _ = self.make_owner(ranks=FixedRanks(NOW - timedelta(days=2), ALPHA=75))
+        result = owner.discover_and_admit(evaluation_timestamp_utc=NOW)
+        self.assertIs(result.status, LaunchStatus.NO_QUALIFYING_CANDIDATE)
+        assert result.discovery_preparation is not None
+        self.assertEqual(result.discovery_preparation.selection.evaluations[0].top50_status, "TOP50_STATUS_UNRESOLVED")
 
     def test_top50_and_unresolved_rank_fail_closed_before_provider_assembly(self):
         for ranks in (Ranks(ALPHA=50), Ranks(BETA=75)):

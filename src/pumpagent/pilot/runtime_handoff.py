@@ -31,6 +31,37 @@ class PilotRuntimeInputError(ValueError):
     """Raised when a required Pilot input cannot be proven point-in-time valid."""
 
 
+class _CandidateLocalAssemblyError(PilotRuntimeInputError):
+    def __init__(self, stage: str, reason: str, classification: str = "CANDIDATE_LOCAL_PROVIDER_SYMBOL_UNAVAILABLE") -> None:
+        super().__init__(reason)
+        self.stage = stage
+        self.classification = classification
+
+
+@dataclass(frozen=True)
+class CandidateEvidenceFailure:
+    """A terminal state for one eligible candidate, never a profile failure."""
+
+    symbol: str
+    stage: str
+    reason: str
+    classification: str
+
+
+@dataclass(frozen=True)
+class PilotDiscoveryPreparation:
+    """Completed eligible-universe assembly before journal/admission work."""
+
+    eligible_count: int
+    candidates: tuple[CandidateInput, ...]
+    candidate_failures: tuple[CandidateEvidenceFailure, ...]
+    selection: SelectionResult
+
+    @property
+    def full_universe_evaluation_complete(self) -> bool:
+        return self.eligible_count == len(self.candidates) + len(self.candidate_failures)
+
+
 @dataclass(frozen=True)
 class NativeCandle:
     timestamp_utc: datetime
@@ -158,14 +189,48 @@ class PilotRuntimeInputAssembler:
         tickers: Mapping[str, Mapping[str, Any]],
         evaluation_timestamp_utc: datetime,
     ) -> GuardedPreAdmissionHandoff:
-        evaluation = _utc(evaluation_timestamp_utc)
-        candidates = tuple(
-            self._assemble_candidate(instrument, rank_snapshot, evaluation)
-            for instrument in eligible_instruments(instruments, tickers, rank_snapshot)
+        preparation = self.prepare_discovery(
+            rank_snapshot=rank_snapshot,
+            instruments=instruments,
+            tickers=tickers,
+            evaluation_timestamp_utc=evaluation_timestamp_utc,
         )
-        if not candidates:
+        if preparation.eligible_count == 0:
             raise PilotRuntimeInputError("no current non-Top-50 eligible instruments are available")
-        selection = self.selector(candidates)
+        if preparation.selection.winner is None:
+            raise PilotRuntimeInputError("no candidate passed the accepted Pilot Search Profile")
+        return self.handoff_for_selection(preparation.selection)
+
+    def prepare_discovery(
+        self,
+        *,
+        rank_snapshot: RankSnapshot,
+        instruments: Sequence[Mapping[str, Any]],
+        tickers: Mapping[str, Mapping[str, Any]],
+        evaluation_timestamp_utc: datetime,
+    ) -> PilotDiscoveryPreparation:
+        """Process every eligible candidate unless an explicitly systemic error occurs."""
+        evaluation = _utc(evaluation_timestamp_utc)
+        eligible = eligible_instruments(instruments, tickers, rank_snapshot)
+        candidates: list[CandidateInput] = []
+        failures: list[CandidateEvidenceFailure] = []
+        for instrument in eligible:
+            try:
+                candidates.append(self._assemble_candidate(instrument, rank_snapshot, evaluation))
+            except PilotRuntimeInputError as exc:
+                failure = _candidate_local_failure(instrument.symbol, exc)
+                if failure is None:
+                    raise
+                failures.append(failure)
+        assembled = tuple(candidates)
+        return PilotDiscoveryPreparation(
+            eligible_count=len(eligible),
+            candidates=assembled,
+            candidate_failures=tuple(failures),
+            selection=self.selector(assembled),
+        )
+
+    def handoff_for_selection(self, selection: SelectionResult) -> GuardedPreAdmissionHandoff:
         if selection.winner is None:
             raise PilotRuntimeInputError("no candidate passed the accepted Pilot Search Profile")
         digest = self.journal.append(selection)
@@ -186,17 +251,16 @@ class PilotRuntimeInputAssembler:
     def _assemble_candidate(
         self, instrument: EligibleInstrument, rank_snapshot: RankSnapshot, evaluation: datetime,
     ) -> CandidateInput:
-        provider_symbol = self.source.resolve_bybit_symbol(instrument.symbol)
+        try:
+            provider_symbol = self.source.resolve_bybit_symbol(instrument.symbol)
+        except PilotRuntimeInputError as exc:
+            if "no coinalyze bybit perpetual mapping" in str(exc).lower():
+                raise _CandidateLocalAssemblyError("provider_symbol_resolution", str(exc)) from exc
+            raise
         if not isinstance(provider_symbol, str) or not provider_symbol.strip():
             raise PilotRuntimeInputError("Coinalyze provider symbol is unresolved")
-        one = self.source.fetch_closed_native(
-            bybit_symbol=instrument.symbol, provider_symbol=provider_symbol,
-            timeframe="1m", evaluation_timestamp_utc=evaluation,
-        )
-        five = self.source.fetch_closed_native(
-            bybit_symbol=instrument.symbol, provider_symbol=provider_symbol,
-            timeframe="5m", evaluation_timestamp_utc=evaluation,
-        )
+        one = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "1m", evaluation)
+        five = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "5m", evaluation)
         _validate_batches(instrument, provider_symbol, one, five, evaluation)
         observations = tuple(PriceObservation(row.timestamp_utc, row.close) for row in one.candles)
         return CandidateInput(
@@ -212,6 +276,22 @@ class PilotRuntimeInputAssembler:
             venue=VENUE,
             native_timeframes=NATIVE_TIMEFRAMES,
         )
+
+    def _fetch_candidate_batch(
+        self, symbol: str, provider_symbol: str, timeframe: str, evaluation: datetime,
+    ) -> NativeCandleBatch:
+        try:
+            return self.source.fetch_closed_native(
+                bybit_symbol=symbol, provider_symbol=provider_symbol,
+                timeframe=timeframe, evaluation_timestamp_utc=evaluation,
+            )
+        except PilotRuntimeInputError as exc:
+            message = str(exc).lower()
+            if "native batch is empty" in message or "invalid native coinalyze" in message:
+                classification = ("CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE" if "empty" in message
+                                  else "CANDIDATE_LOCAL_MALFORMED_EVIDENCE")
+                raise _CandidateLocalAssemblyError(f"native_{timeframe}_evidence", str(exc), classification) from exc
+            raise
 
 
 def eligible_instruments(
@@ -256,6 +336,22 @@ def _validate_batches(
         raise PilotRuntimeInputError("insufficient native closed 1m evidence for the rolling 20-minute profile")
     if _utc(one.candles[0].timestamp_utc) > evaluation - WINDOW:
         raise PilotRuntimeInputError("native 1m evidence does not cover the rolling 20-minute window")
+
+
+def _candidate_local_failure(symbol: str, exc: PilotRuntimeInputError) -> CandidateEvidenceFailure | None:
+    """Classify only evidence absence proven local to one requested instrument.
+
+    Authentication, transport, rate-limit, shared-response, journal, selector,
+    and invariant errors deliberately return ``None`` and remain terminal.
+    """
+    if isinstance(exc, _CandidateLocalAssemblyError):
+        return CandidateEvidenceFailure(symbol, exc.stage, str(exc), exc.classification)
+    message = str(exc).lower()
+    if "insufficient native closed 1m evidence" in message or "native 1m evidence does not cover" in message:
+        return CandidateEvidenceFailure(symbol, "native_1m_evidence", str(exc), "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE")
+    if "insufficient native closed 5m evidence" in message or "native 5m evidence does not cover" in message:
+        return CandidateEvidenceFailure(symbol, "native_5m_evidence", str(exc), "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE")
+    return None
 
 
 def _utc(value: datetime) -> datetime:
