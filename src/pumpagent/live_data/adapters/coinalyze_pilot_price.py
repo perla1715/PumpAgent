@@ -1,6 +1,7 @@
 """Native Coinalyze 1m/5m price boundary for the TEST_ONLY Pilot handoff."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -15,27 +16,67 @@ COINALYZE_BASE_URL = "https://api.coinalyze.net/v1"
 _INTERVALS = {"1m": ("1min", 60), "5m": ("5min", 300)}
 
 
+@dataclass(frozen=True)
+class CoinalyzeMarketResolutionSnapshot:
+    """One validated /future-markets response, owned by a discovery cycle."""
+
+    markets: tuple[dict[str, Any], ...]
+    fetched_at_utc: datetime
+    raw_sha256: str
+
+    def provenance(self) -> dict[str, Any]:
+        return {
+            "provider": "coinalyze",
+            "endpoint": "/future-markets",
+            "fetched_at_utc": self.fetched_at_utc.isoformat(),
+            "raw_sha256": self.raw_sha256,
+            "market_count": len(self.markets),
+        }
+
+
 class CoinalyzeNativePilotPriceClient:
-    """Small injectable HTTP client; no scheduler, cache, or Scanner behavior."""
+    """Injectable native-price client with an explicit discovery-cycle resolution scope."""
 
     def __init__(self, api_key: str | None = None, *, timeout_seconds: float = 20.0,
                  request_json: Callable[[str, dict[str, str]], Any] | None = None) -> None:
         self.api_key = api_key or os.environ.get("COINALYZE_API_KEY") or os.environ.get("COINALYZE_KEY") or os.environ.get("API_KEY")
         self.timeout_seconds = timeout_seconds
         self._request_json = request_json or self._get_json
+        self._discovery_resolution: CoinalyzeMarketResolutionSnapshot | None = None
+
+    def begin_discovery_cycle(self) -> CoinalyzeMarketResolutionSnapshot:
+        """Fetch one coherent mapping snapshot for the caller's discovery cycle."""
+        if self._discovery_resolution is not None:
+            raise PilotRuntimeInputError("Coinalyze discovery-cycle resolution is already active")
+        snapshot = self._fetch_market_resolution_snapshot()
+        self._discovery_resolution = snapshot
+        return snapshot
+
+    def end_discovery_cycle(self) -> None:
+        """Discard cycle-local metadata so independent runs always fetch afresh."""
+        self._discovery_resolution = None
 
     def resolve_bybit_symbol(self, bybit_symbol: str) -> str:
         symbol = bybit_symbol.upper().strip()
         if not symbol:
             raise PilotRuntimeInputError("Bybit symbol is required")
-        markets = self._request_json("/future-markets", {})
-        for market in _markets(markets):
+        snapshot = self._discovery_resolution or self._fetch_market_resolution_snapshot()
+        for market in snapshot.markets:
             candidate = str(market.get("symbol", "")).upper()
             quote = str(market.get("quote_asset", "")).upper()
             exchange = str(market.get("exchange", "")).upper()
             if candidate == f"{symbol}.6" and quote == "USDT" and (not exchange or "BYBIT" in exchange or exchange == "6"):
                 return candidate
         raise PilotRuntimeInputError(f"No Coinalyze Bybit perpetual mapping for {symbol}")
+
+    def _fetch_market_resolution_snapshot(self) -> CoinalyzeMarketResolutionSnapshot:
+        payload = self._request_json("/future-markets", {})
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        return CoinalyzeMarketResolutionSnapshot(
+            markets=tuple(_markets(payload)),
+            fetched_at_utc=datetime.now(timezone.utc),
+            raw_sha256=hashlib.sha256(raw).hexdigest(),
+        )
 
     def fetch_closed_native(self, *, bybit_symbol: str, provider_symbol: str, timeframe: str,
                             evaluation_timestamp_utc: datetime) -> NativeCandleBatch:

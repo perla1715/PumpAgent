@@ -56,6 +56,7 @@ class PilotDiscoveryPreparation:
     candidates: tuple[CandidateInput, ...]
     candidate_failures: tuple[CandidateEvidenceFailure, ...]
     selection: SelectionResult
+    market_resolution_provenance: Mapping[str, Any] | None = None
 
     @property
     def full_universe_evaluation_complete(self) -> bool:
@@ -214,21 +215,37 @@ class PilotRuntimeInputAssembler:
         eligible = eligible_instruments(instruments, tickers, rank_snapshot)
         candidates: list[CandidateInput] = []
         failures: list[CandidateEvidenceFailure] = []
-        for instrument in eligible:
-            try:
-                candidates.append(self._assemble_candidate(instrument, rank_snapshot, evaluation))
-            except PilotRuntimeInputError as exc:
-                failure = _candidate_local_failure(instrument.symbol, exc)
-                if failure is None:
-                    raise
-                failures.append(failure)
+        resolution_snapshot = self._begin_market_resolution_cycle() if eligible else None
+        try:
+            for instrument in eligible:
+                try:
+                    candidates.append(self._assemble_candidate(instrument, rank_snapshot, evaluation))
+                except PilotRuntimeInputError as exc:
+                    failure = _candidate_local_failure(instrument.symbol, exc)
+                    if failure is None:
+                        raise
+                    failures.append(failure)
+        finally:
+            self._end_market_resolution_cycle(resolution_snapshot)
         assembled = tuple(candidates)
         return PilotDiscoveryPreparation(
             eligible_count=len(eligible),
             candidates=assembled,
             candidate_failures=tuple(failures),
             selection=self.selector(assembled),
+            market_resolution_provenance=_resolution_provenance(resolution_snapshot),
         )
+
+    def _begin_market_resolution_cycle(self) -> Any:
+        begin = getattr(self.source, "begin_discovery_cycle", None)
+        return begin() if callable(begin) else None
+
+    def _end_market_resolution_cycle(self, snapshot: Any) -> None:
+        if snapshot is None:
+            return
+        end = getattr(self.source, "end_discovery_cycle", None)
+        if callable(end):
+            end()
 
     def handoff_for_selection(self, selection: SelectionResult) -> GuardedPreAdmissionHandoff:
         if selection.winner is None:
@@ -368,3 +385,13 @@ def _sha256(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _resolution_provenance(snapshot: Any) -> Mapping[str, Any] | None:
+    if snapshot is None:
+        return None
+    provenance = getattr(snapshot, "provenance", None)
+    if callable(provenance):
+        value = provenance()
+        return dict(value) if isinstance(value, Mapping) else None
+    return None

@@ -221,6 +221,76 @@ class PilotRuntimeHandoffTests(unittest.TestCase):
         before = manifest.read_bytes(); result = validate_case_manifest_boundary(manifest)
         self.assertTrue(result["pilot_event_not_started"]); self.assertEqual(before, manifest.read_bytes())
 
+    def test_cycle_local_market_resolution_fetches_once_for_59_candidates_and_118_native_batches(self):
+        symbols = tuple(f"TOKEN{index:02d}USDT" for index in range(59))
+        calls: list[str] = []
+        markets = [
+            {"symbol": f"{symbol}.6", "quote_asset": "USDT", "exchange": "BYBIT"}
+            for symbol in symbols
+        ]
+        history = [
+            {"t": int((NOW - timedelta(minutes=25 - index)).timestamp()), "o": 100, "h": 100,
+             "l": 100, "c": 100, "v": 1}
+            for index in range(25)
+        ]
+        def request_json(path, _params):
+            calls.append(path)
+            return markets if path == "/future-markets" else [{"history": history}]
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        client = CoinalyzeNativePilotPriceClient(request_json=request_json)
+        preparation = PilotRuntimeInputAssembler(
+            client, PilotAdmissionEvidenceJournal(Path(root.name) / "journal"),
+        ).prepare_discovery(
+            rank_snapshot=ranks(**{symbol[:-4]: 100 + index for index, symbol in enumerate(symbols)}),
+            instruments=instruments(*symbols), tickers={symbol: {} for symbol in symbols},
+            evaluation_timestamp_utc=NOW,
+        )
+        self.assertEqual(len(preparation.candidates), 59)
+        self.assertEqual(calls.count("/future-markets"), 1)
+        self.assertEqual(calls.count("/ohlcv-history"), 118)
+        self.assertEqual(preparation.market_resolution_provenance["market_count"], 59)
+        self.assertEqual(preparation.market_resolution_provenance["endpoint"], "/future-markets")
+
+    def test_cycle_resolution_ends_after_discovery_and_missing_mapping_is_candidate_local(self):
+        calls: list[str] = []
+        history = [
+            {"t": int((NOW - timedelta(minutes=25 - index)).timestamp()), "o": 100, "h": 100,
+             "l": 100, "c": 100, "v": 1}
+            for index in range(25)
+        ]
+        def request_json(path, _params):
+            calls.append(path)
+            if path == "/future-markets":
+                return [{"symbol": "BETAUSDT.6", "quote_asset": "USDT", "exchange": "BYBIT"}]
+            return [{"history": history}]
+        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        client = CoinalyzeNativePilotPriceClient(request_json=request_json)
+        assembler = PilotRuntimeInputAssembler(client, PilotAdmissionEvidenceJournal(Path(root.name) / "journal"))
+        preparation = assembler.prepare_discovery(
+            rank_snapshot=ranks(ALPHA=75, BETA=76), instruments=instruments("ALPHAUSDT", "BETAUSDT"),
+            tickers={"ALPHAUSDT": {}, "BETAUSDT": {}}, evaluation_timestamp_utc=NOW,
+        )
+        self.assertEqual(calls.count("/future-markets"), 1)
+        self.assertEqual([candidate.symbol for candidate in preparation.candidates], ["BETAUSDT"])
+        self.assertEqual(preparation.candidate_failures[0].classification, "CANDIDATE_LOCAL_PROVIDER_SYMBOL_UNAVAILABLE")
+        client.resolve_bybit_symbol("BETAUSDT")
+        self.assertEqual(calls.count("/future-markets"), 2)
+
+    def test_shared_market_resolution_rate_limit_and_malformed_response_are_terminal(self):
+        for payload in (PilotRuntimeInputError("Coinalyze HTTP 429 from /future-markets"), {}):
+            root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+            def request_json(_path, _params, payload=payload):
+                if isinstance(payload, Exception):
+                    raise payload
+                return payload
+            client = CoinalyzeNativePilotPriceClient(request_json=request_json)
+            assembler = PilotRuntimeInputAssembler(client, PilotAdmissionEvidenceJournal(Path(root.name) / "journal"))
+            with self.assertRaises(PilotRuntimeInputError):
+                assembler.prepare_discovery(
+                    rank_snapshot=ranks(ALPHA=75), instruments=instruments("ALPHAUSDT"),
+                    tickers={"ALPHAUSDT": {}}, evaluation_timestamp_utc=NOW,
+                )
+
     def test_injected_coinalyze_client_parses_native_closed_price_without_live_network(self):
         def request_json(path, _params):
             if path == "/future-markets":
