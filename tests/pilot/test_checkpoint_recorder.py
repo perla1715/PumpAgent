@@ -202,6 +202,16 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
         "pumpagent.live_data.domain",
         "pumpagent.live_data.validation.validator",
         "pumpagent.pilot.pilot_search_profile",
+        "pumpagent.pilot.runtime_handoff",
+        "pumpagent.runtime.domain",
+        "pumpagent.runtime.domain.enums",
+        "pumpagent.runtime.domain.observation_episode",
+        "pumpagent.runtime.domain.observation_policy",
+        "pumpagent.runtime.modules.observation_lifecycle.executor",
+        "pumpagent.runtime.modules.observation_lifecycle.runtime_cycle",
+        "pumpagent.runtime.modules.watchlist.manager",
+        "pumpagent.runtime.modules.watchlist.observation_boundary",
+        "pumpagent.runtime.orchestrator.runtime_loop",
     }
     for source in pilot.glob("*.py"):
         for node in ast.walk(ast.parse(source.read_text())):
