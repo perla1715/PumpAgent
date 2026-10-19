@@ -119,7 +119,8 @@ class LaunchOrchestratorTests(unittest.TestCase):
         assert result.discovery_preparation is not None
         self.assertTrue(result.discovery_preparation.full_universe_evaluation_complete)
         self.assertEqual(len(result.discovery_preparation.candidate_failures), 1)
-        self.assertEqual(len(result.discovery_preparation.selection.evaluations), 1)
+        self.assertEqual(len(result.discovery_preparation.selection.evaluations), 0)
+        self.assertEqual(len(result.discovery_preparation.stage1_non_survivors), 1)
 
     def test_rank_fetched_during_discovery_is_not_false_future_relative_to_requested_time(self):
         owner, _, _ = self.make_owner(ranks=FixedRanks(NOW, ALPHA=75))
@@ -139,7 +140,7 @@ class LaunchOrchestratorTests(unittest.TestCase):
         result = owner.discover_and_admit(evaluation_timestamp_utc=NOW)
         self.assertIs(result.status, LaunchStatus.NO_QUALIFYING_CANDIDATE)
         assert result.discovery_preparation is not None
-        self.assertEqual(result.discovery_preparation.selection.evaluations[0].top50_status, "TOP50_STATUS_UNRESOLVED")
+        self.assertEqual(result.discovery_preparation.stage1_non_survivors[0].profile.top50_status, "TOP50_STATUS_UNRESOLVED")
 
     def test_top50_and_unresolved_rank_fail_closed_before_provider_assembly(self):
         for ranks in (Ranks(ALPHA=50), Ranks(BETA=75)):

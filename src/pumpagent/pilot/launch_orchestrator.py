@@ -18,6 +18,7 @@ from pumpagent.live_data.adapters.coinalyze_pilot_price import CoinalyzeNativePi
 
 from pumpagent.live_data.adapters.market_cap_rank import RankSnapshot
 from pumpagent.pilot.pilot_search_profile import PilotAdmissionEvidenceJournal
+from pumpagent.pilot.cohort_rate_budget import CoinalyzeCohortRateBudget
 from pumpagent.pilot.runtime_handoff import (
     CoinalyzePilotPriceSource,
     GuardedPreAdmissionHandoff,
@@ -97,6 +98,7 @@ def build_first_shadow_pilot_launch_orchestrator(
         watchlist=watchlist,
         runtime=runtime,
         clock=clock,
+        rate_budget_factory=CoinalyzeCohortRateBudget,
     )
 
 
@@ -114,6 +116,7 @@ class FirstShadowPilotLaunchOrchestrator:
         watchlist: WatchlistManager | None = None,
         runtime: RuntimeOrchestrator | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        rate_budget_factory: Callable[[], CoinalyzeCohortRateBudget] | None = None,
     ) -> None:
         self.rank_source = rank_source
         self.instruments_loader = instruments_loader
@@ -123,6 +126,9 @@ class FirstShadowPilotLaunchOrchestrator:
         self.watchlist = watchlist or WatchlistManager()
         self.runtime = runtime or RuntimeOrchestrator()
         self.clock = clock
+        self.rate_budget_factory = rate_budget_factory or (
+            CoinalyzeCohortRateBudget if callable(getattr(price_source, "begin_discovery_cycle", None)) else None
+        )
         self._admitted_journal_digests: set[str] = set()
 
     def discover_and_admit(
@@ -153,7 +159,10 @@ class FirstShadowPilotLaunchOrchestrator:
             )
         evaluation = max(requested_evaluation, post_fetch_clock, rank_fetched)
         try:
-            assembler = PilotRuntimeInputAssembler(self.price_source, self.journal)
+            assembler = PilotRuntimeInputAssembler(
+                self.price_source, self.journal,
+                rate_budget=self.rate_budget_factory() if self.rate_budget_factory else None,
+            )
             preparation = assembler.prepare_discovery(
                 rank_snapshot=rank_snapshot,
                 instruments=instruments,

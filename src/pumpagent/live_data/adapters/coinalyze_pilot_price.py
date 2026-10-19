@@ -16,6 +16,14 @@ COINALYZE_BASE_URL = "https://api.coinalyze.net/v1"
 _INTERVALS = {"1m": ("1min", 60), "5m": ("5min", 300)}
 
 
+class CoinalyzeRateLimitError(PilotRuntimeInputError):
+    """Systemic provider quota response with safe Retry-After metadata."""
+
+    def __init__(self, message: str, retry_after_seconds: float | None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 @dataclass(frozen=True)
 class CoinalyzeMarketResolutionSnapshot:
     """One validated /future-markets response, owned by a discovery cycle."""
@@ -121,6 +129,13 @@ class CoinalyzeNativePilotPriceClient:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
+            if exc.code == 429:
+                raw_retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    retry_after = float(raw_retry_after) if raw_retry_after is not None else None
+                except (TypeError, ValueError):
+                    retry_after = None
+                raise CoinalyzeRateLimitError(f"Coinalyze HTTP 429 from {path}", retry_after) from exc
             raise PilotRuntimeInputError(f"Coinalyze HTTP {exc.code} from {path}") from exc
         except (error.URLError, TimeoutError, socket.timeout) as exc:
             raise PilotRuntimeInputError(f"Coinalyze request failed for {path}: {exc}") from exc

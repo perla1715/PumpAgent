@@ -176,26 +176,53 @@ class SelectionResult:
         }
 
 
-def evaluate_candidate(candidate: CandidateInput, *, rank_max_age: timedelta = timedelta(hours=24)) -> CandidateEvaluation:
-    evaluation = _utc(candidate.evaluation_timestamp_utc)
-    entry, resolution = candidate.rank_snapshot.resolve(_underlying(candidate.symbol))
-    snapshot_time = _utc(candidate.rank_snapshot.fetched_at)
+@dataclass(frozen=True)
+class CanonicalProfileEvaluation:
+    """P1/P2/P4/P5 output from one ordered closed 1m evidence sequence."""
+
+    top50_status: str
+    rank: int | None
+    p1_pass: bool
+    p2_pass: bool
+    p4_pass: bool
+    p5_pass: bool
+    start_timestamp_utc: datetime | None
+    start_price: float | None
+    current_price: float | None
+    local_high: float | None
+    local_high_timestamp_utc: datetime | None
+    pump_percent: float | None
+    distance_from_high_percent: float | None
+    max_running_high_pullback_percent: float | None
+    reason: str
+
+    @property
+    def qualifies(self) -> bool:
+        return self.top50_status == "NON_TOP50_ELIGIBLE" and self.p1_pass and self.p2_pass and self.p4_pass and self.p5_pass
+
+
+def evaluate_canonical_profile(
+    *, symbol: str, observations: Sequence[PriceObservation], evaluation_timestamp_utc: datetime,
+    rank_snapshot: RankSnapshot, rank_max_age: timedelta = timedelta(hours=24),
+) -> CanonicalProfileEvaluation:
+    """The single canonical owner of Pilot P1/P2/P4/P5 semantics."""
+    evaluation = _utc(evaluation_timestamp_utc)
+    entry, _ = rank_snapshot.resolve(_underlying(symbol))
+    snapshot_time = _utc(rank_snapshot.fetched_at)
     rank_fresh = timedelta(0) <= evaluation - snapshot_time <= rank_max_age
     if not rank_fresh or entry is None:
-        return _failed(candidate, "TOP50_STATUS_UNRESOLVED", None, "Required market-cap rank is unresolved or stale.")
+        return CanonicalProfileEvaluation("TOP50_STATUS_UNRESOLVED", None, False, False, False, False, None, None, None, None, None, None, None, None, "Required market-cap rank is unresolved or stale.")
     if entry.rank <= 50:
-        return _failed(candidate, "EXCLUDED_TOP50", entry.rank, "Top-50 candidate is excluded.")
+        return CanonicalProfileEvaluation("EXCLUDED_TOP50", entry.rank, False, False, False, False, None, None, None, None, None, None, None, None, "Top-50 candidate is excluded.")
     window_start = evaluation - WINDOW
-    rows = tuple(row for row in candidate.observations if window_start <= _utc(row.timestamp_utc) <= evaluation)
+    rows = tuple(row for row in observations if window_start <= _utc(row.timestamp_utc) <= evaluation)
     if len(rows) < 2:
-        return _failed(candidate, "NON_TOP50_ELIGIBLE", entry.rank, "Insufficient closed observations in rolling 20-minute window.")
+        return CanonicalProfileEvaluation("NON_TOP50_ELIGIBLE", entry.rank, False, False, False, False, None, None, None, None, None, None, None, None, "Insufficient closed observations in rolling 20-minute window.")
     start_index, high_index, pump = _largest_upward_pair(rows)
     start = rows[start_index]
     high = rows[high_index]
     current = rows[-1]
     distance = (high.price - current.price) / high.price * 100.0
-    # P5 preserves the Owner-ratified running-high pullback across the entire
-    # closed rolling window. The selected P1 start never resets this history.
     running_high = -math.inf
     maximum_pullback = 0.0
     for row in rows:
@@ -206,9 +233,22 @@ def evaluate_candidate(candidate: CandidateInput, *, rank_max_age: timedelta = t
     p4 = distance <= MAX_PULLBACK_PERCENT
     p5 = maximum_pullback <= MAX_PULLBACK_PERCENT
     reason = "Qualified Pilot Search Profile v1." if all((p1, p2, p4, p5)) else "Pilot Search Profile gate did not pass."
-    return CandidateEvaluation(candidate, "NON_TOP50_ELIGIBLE", entry.rank, p1, p2, p4, p5,
-                               _utc(start.timestamp_utc), start.price, current.price, high.price,
-                               _utc(high.timestamp_utc), pump, distance, maximum_pullback, reason)
+    return CanonicalProfileEvaluation("NON_TOP50_ELIGIBLE", entry.rank, p1, p2, p4, p5, _utc(start.timestamp_utc), start.price, current.price, high.price, _utc(high.timestamp_utc), pump, distance, maximum_pullback, reason)
+
+
+def evaluate_candidate(candidate: CandidateInput, *, rank_max_age: timedelta = timedelta(hours=24)) -> CandidateEvaluation:
+    profile = evaluate_canonical_profile(
+        symbol=candidate.symbol, observations=candidate.observations,
+        evaluation_timestamp_utc=candidate.evaluation_timestamp_utc,
+        rank_snapshot=candidate.rank_snapshot, rank_max_age=rank_max_age,
+    )
+    return CandidateEvaluation(
+        candidate, profile.top50_status, profile.rank, profile.p1_pass, profile.p2_pass,
+        profile.p4_pass, profile.p5_pass, profile.start_timestamp_utc, profile.start_price,
+        profile.current_price, profile.local_high, profile.local_high_timestamp_utc,
+        profile.pump_percent, profile.distance_from_high_percent,
+        profile.max_running_high_pullback_percent, profile.reason,
+    )
 
 
 def select_candidate(candidates: Sequence[CandidateInput]) -> SelectionResult:

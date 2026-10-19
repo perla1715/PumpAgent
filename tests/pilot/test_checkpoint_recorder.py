@@ -196,7 +196,7 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
         recover(journal, symbol="DEMOUSDT")
     pilot = Path(__file__).resolve().parents[2] / "src/pumpagent/pilot"
     allowed = {"__future__", "contextlib", "csv", "dataclasses", "datetime", "enum", "fcntl", "hashlib",
-               "json", "math", "os", "pathlib", "re", "stat", "tempfile", "typing"}
+               "json", "math", "os", "pathlib", "re", "stat", "tempfile", "time", "typing"}
     allowed_project_imports = {
         "pumpagent.live_data.adapters.market_cap_rank",
         "pumpagent.live_data.adapters.bybit_public_market",
@@ -204,6 +204,7 @@ def test_13_offline_boundary(journal, inputs, monkeypatch):
         "pumpagent.live_data.domain",
         "pumpagent.live_data.validation.validator",
         "pumpagent.pilot.pilot_search_profile",
+        "pumpagent.pilot.cohort_rate_budget",
         "pumpagent.pilot.runtime_handoff",
         "pumpagent.pilot.shadow_admission",
         "pumpagent.runtime.domain",

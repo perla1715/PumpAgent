@@ -11,6 +11,7 @@ import math
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from pumpagent.live_data.adapters.market_cap_rank import RankSnapshot
+from pumpagent.pilot.cohort_rate_budget import CoinalyzeCohortRateBudget
 from pumpagent.pilot.pilot_search_profile import (
     CandidateEvaluation,
     CandidateInput,
@@ -18,6 +19,8 @@ from pumpagent.pilot.pilot_search_profile import (
     PriceObservation,
     SelectionResult,
     select_candidate,
+    evaluate_canonical_profile,
+    CanonicalProfileEvaluation,
 )
 
 PROVIDER = "coinalyze"
@@ -49,6 +52,16 @@ class CandidateEvidenceFailure:
 
 
 @dataclass(frozen=True)
+class CandidateStageOneScreen:
+    """Exact 1m canonical profile result before 5m final-evidence acquisition."""
+
+    instrument: "EligibleInstrument"
+    provider_symbol: str
+    one_minute: "NativeCandleBatch"
+    profile: CanonicalProfileEvaluation
+
+
+@dataclass(frozen=True)
 class PilotDiscoveryPreparation:
     """Completed eligible-universe assembly before journal/admission work."""
 
@@ -57,10 +70,30 @@ class PilotDiscoveryPreparation:
     candidate_failures: tuple[CandidateEvidenceFailure, ...]
     selection: SelectionResult
     market_resolution_provenance: Mapping[str, Any] | None = None
+    stage1_non_survivors: tuple[CandidateStageOneScreen, ...] = ()
+    stage1_survivors: tuple[CandidateStageOneScreen, ...] = ()
+    request_ledger: tuple[Any, ...] = ()
+    cohort_evaluation_timestamp_utc: datetime | None = None
+    cohort_collection_started_at_utc: datetime | None = None
+    cohort_collection_completed_at_utc: datetime | None = None
+    cohort_collection_duration_seconds: float | None = None
+    eligible_symbols: tuple[str, ...] = ()
 
     @property
     def full_universe_evaluation_complete(self) -> bool:
-        return self.eligible_count == len(self.candidates) + len(self.candidate_failures)
+        """Every eligible symbol has exactly one stage-one terminal result."""
+        non_survivors = {screen.instrument.symbol for screen in self.stage1_non_survivors}
+        stage_two = {candidate.symbol for candidate in self.candidates}
+        failures = {failure.symbol for failure in self.candidate_failures}
+        eligible = set(self.eligible_symbols)
+        terminal = non_survivors | stage_two | failures
+        return (
+            len(eligible) == self.eligible_count
+            and eligible == terminal
+            and not (non_survivors & stage_two)
+            and not (non_survivors & failures)
+            and not (stage_two & failures)
+        )
 
 
 @dataclass(frozen=True)
@@ -177,10 +210,12 @@ class PilotRuntimeInputAssembler:
         journal: PilotAdmissionEvidenceJournal,
         *,
         selector: Callable[[Sequence[CandidateInput]], SelectionResult] = select_candidate,
+        rate_budget: CoinalyzeCohortRateBudget | None = None,
     ) -> None:
         self.source = source
         self.journal = journal
         self.selector = selector
+        self.rate_budget = rate_budget
 
     def prepare(
         self,
@@ -210,16 +245,31 @@ class PilotRuntimeInputAssembler:
         tickers: Mapping[str, Mapping[str, Any]],
         evaluation_timestamp_utc: datetime,
     ) -> PilotDiscoveryPreparation:
-        """Process every eligible candidate unless an explicitly systemic error occurs."""
+        """Run one fixed-T progressive cohort; 5m is acquired only for exact 1m survivors."""
         evaluation = _utc(evaluation_timestamp_utc)
+        collection_started = self._cohort_utc_now()
         eligible = eligible_instruments(instruments, tickers, rank_snapshot)
         candidates: list[CandidateInput] = []
         failures: list[CandidateEvidenceFailure] = []
+        non_survivors: list[CandidateStageOneScreen] = []
+        survivors: list[CandidateStageOneScreen] = []
         resolution_snapshot = self._begin_market_resolution_cycle() if eligible else None
         try:
             for instrument in eligible:
                 try:
-                    candidates.append(self._assemble_candidate(instrument, rank_snapshot, evaluation))
+                    screen = self._assemble_stage_one(instrument, rank_snapshot, evaluation)
+                except PilotRuntimeInputError as exc:
+                    failure = _candidate_local_failure(instrument.symbol, exc)
+                    if failure is None:
+                        raise
+                    failures.append(failure)
+                    continue
+                if not screen.profile.qualifies:
+                    non_survivors.append(screen)
+                    continue
+                survivors.append(screen)
+                try:
+                    candidates.append(self._assemble_stage_two(screen, rank_snapshot, evaluation))
                 except PilotRuntimeInputError as exc:
                     failure = _candidate_local_failure(instrument.symbol, exc)
                     if failure is None:
@@ -227,18 +277,31 @@ class PilotRuntimeInputAssembler:
                     failures.append(failure)
         finally:
             self._end_market_resolution_cycle(resolution_snapshot)
+        collection_completed = self._cohort_utc_now()
         assembled = tuple(candidates)
         return PilotDiscoveryPreparation(
-            eligible_count=len(eligible),
-            candidates=assembled,
-            candidate_failures=tuple(failures),
-            selection=self.selector(assembled),
+            eligible_count=len(eligible), candidates=assembled,
+            candidate_failures=tuple(failures), selection=self.selector(assembled),
             market_resolution_provenance=_resolution_provenance(resolution_snapshot),
+            stage1_non_survivors=tuple(non_survivors), stage1_survivors=tuple(survivors),
+            request_ledger=self.rate_budget.ledger if self.rate_budget is not None else (),
+            cohort_evaluation_timestamp_utc=evaluation,
+            cohort_collection_started_at_utc=collection_started,
+            cohort_collection_completed_at_utc=collection_completed,
+            cohort_collection_duration_seconds=max(0.0, (collection_completed - collection_started).total_seconds()),
+            eligible_symbols=tuple(instrument.symbol for instrument in eligible),
         )
+
+    def _cohort_utc_now(self) -> datetime:
+        if self.rate_budget is not None:
+            return self.rate_budget.utc_now()
+        return datetime.now(timezone.utc)
 
     def _begin_market_resolution_cycle(self) -> Any:
         begin = getattr(self.source, "begin_discovery_cycle", None)
-        return begin() if callable(begin) else None
+        if not callable(begin):
+            return None
+        return self._dispatch("/future-markets", None, None, begin)
 
     def _end_market_resolution_cycle(self, snapshot: Any) -> None:
         if snapshot is None:
@@ -246,6 +309,65 @@ class PilotRuntimeInputAssembler:
         end = getattr(self.source, "end_discovery_cycle", None)
         if callable(end):
             end()
+
+    def _assemble_stage_one(
+        self, instrument: EligibleInstrument, rank_snapshot: RankSnapshot, evaluation: datetime,
+    ) -> CandidateStageOneScreen:
+        try:
+            provider_symbol = self.source.resolve_bybit_symbol(instrument.symbol)
+        except PilotRuntimeInputError as exc:
+            if "no coinalyze bybit perpetual mapping" in str(exc).lower():
+                raise _CandidateLocalAssemblyError("provider_symbol_resolution", str(exc)) from exc
+            raise
+        if not isinstance(provider_symbol, str) or not provider_symbol.strip():
+            raise PilotRuntimeInputError("Coinalyze provider symbol is unresolved")
+        one = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "1m", evaluation)
+        _validate_one_minute_batch(instrument, provider_symbol, one, evaluation)
+        observations = tuple(PriceObservation(row.timestamp_utc, row.close) for row in one.candles)
+        profile = evaluate_canonical_profile(
+            symbol=instrument.symbol, observations=observations,
+            evaluation_timestamp_utc=evaluation, rank_snapshot=rank_snapshot,
+        )
+        return CandidateStageOneScreen(instrument, provider_symbol, one, profile)
+
+    def _assemble_stage_two(
+        self, screen: CandidateStageOneScreen, rank_snapshot: RankSnapshot, evaluation: datetime,
+    ) -> CandidateInput:
+        instrument, provider_symbol, one = screen.instrument, screen.provider_symbol, screen.one_minute
+        five = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "5m", evaluation)
+        _validate_batches(instrument, provider_symbol, one, five, evaluation)
+        observations = tuple(PriceObservation(row.timestamp_utc, row.close) for row in one.candles)
+        return CandidateInput(
+            symbol=instrument.symbol, provider_symbol_literal=provider_symbol,
+            observations=observations, evaluation_timestamp_utc=evaluation,
+            rank_snapshot=rank_snapshot, instrument_metadata=dict(instrument.metadata),
+            raw_evidence_ids=(one.raw_source_identity, five.raw_source_identity),
+            raw_evidence_digests=(one.raw_sha256, five.raw_sha256), provider=PROVIDER,
+            venue=VENUE, native_timeframes=NATIVE_TIMEFRAMES,
+        )
+
+    def _fetch_candidate_batch(self, symbol: str, provider_symbol: str, timeframe: str, evaluation: datetime) -> NativeCandleBatch:
+        return self._dispatch(
+            "/ohlcv-history", symbol, timeframe,
+            lambda: self.source.fetch_closed_native(
+                bybit_symbol=symbol, provider_symbol=provider_symbol,
+                timeframe=timeframe, evaluation_timestamp_utc=evaluation,
+            ),
+        )
+
+    def _dispatch(self, endpoint: str, symbol: str | None, timeframe: str | None, operation: Callable[[], Any]) -> Any:
+        entry = self.rate_budget.reserve(endpoint_class=endpoint, symbol=symbol, timeframe=timeframe) if self.rate_budget else None
+        try:
+            value = operation()
+        except Exception as exc:
+            if entry is not None:
+                retry_after = getattr(exc, "retry_after_seconds", None)
+                local = symbol is not None and isinstance(exc, PilotRuntimeInputError) and _candidate_local_failure(symbol, exc) is not None
+                (self.rate_budget.error if local else self.rate_budget.fail)(entry, exc, retry_after_seconds=retry_after)
+            raise
+        if entry is not None:
+            self.rate_budget.succeed(entry)
+        return value
 
     def handoff_for_selection(self, selection: SelectionResult) -> GuardedPreAdmissionHandoff:
         if selection.winner is None:
@@ -265,50 +387,6 @@ class PilotRuntimeInputAssembler:
             journal_record_name=f"{int(record['sequence']):020d}.json",
         )
 
-    def _assemble_candidate(
-        self, instrument: EligibleInstrument, rank_snapshot: RankSnapshot, evaluation: datetime,
-    ) -> CandidateInput:
-        try:
-            provider_symbol = self.source.resolve_bybit_symbol(instrument.symbol)
-        except PilotRuntimeInputError as exc:
-            if "no coinalyze bybit perpetual mapping" in str(exc).lower():
-                raise _CandidateLocalAssemblyError("provider_symbol_resolution", str(exc)) from exc
-            raise
-        if not isinstance(provider_symbol, str) or not provider_symbol.strip():
-            raise PilotRuntimeInputError("Coinalyze provider symbol is unresolved")
-        one = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "1m", evaluation)
-        five = self._fetch_candidate_batch(instrument.symbol, provider_symbol, "5m", evaluation)
-        _validate_batches(instrument, provider_symbol, one, five, evaluation)
-        observations = tuple(PriceObservation(row.timestamp_utc, row.close) for row in one.candles)
-        return CandidateInput(
-            symbol=instrument.symbol,
-            provider_symbol_literal=provider_symbol,
-            observations=observations,
-            evaluation_timestamp_utc=evaluation,
-            rank_snapshot=rank_snapshot,
-            instrument_metadata=dict(instrument.metadata),
-            raw_evidence_ids=(one.raw_source_identity, five.raw_source_identity),
-            raw_evidence_digests=(one.raw_sha256, five.raw_sha256),
-            provider=PROVIDER,
-            venue=VENUE,
-            native_timeframes=NATIVE_TIMEFRAMES,
-        )
-
-    def _fetch_candidate_batch(
-        self, symbol: str, provider_symbol: str, timeframe: str, evaluation: datetime,
-    ) -> NativeCandleBatch:
-        try:
-            return self.source.fetch_closed_native(
-                bybit_symbol=symbol, provider_symbol=provider_symbol,
-                timeframe=timeframe, evaluation_timestamp_utc=evaluation,
-            )
-        except PilotRuntimeInputError as exc:
-            message = str(exc).lower()
-            if "native batch is empty" in message or "invalid native coinalyze" in message:
-                classification = ("CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE" if "empty" in message
-                                  else "CANDIDATE_LOCAL_MALFORMED_EVIDENCE")
-                raise _CandidateLocalAssemblyError(f"native_{timeframe}_evidence", str(exc), classification) from exc
-            raise
 
 
 def eligible_instruments(
@@ -334,6 +412,21 @@ def eligible_instruments(
             continue
         values[symbol] = EligibleInstrument(symbol, metadata)
     return tuple(values[symbol] for symbol in sorted(values))
+
+
+def _validate_one_minute_batch(instrument: EligibleInstrument, provider_symbol: str, one: NativeCandleBatch, evaluation: datetime) -> None:
+    if set(instrument.metadata) < set(_REQUIRED_METADATA):
+        raise PilotRuntimeInputError("instrument/unit metadata is incomplete")
+    if one.bybit_symbol.upper() != instrument.symbol or one.provider_symbol != provider_symbol:
+        raise PilotRuntimeInputError("provider-symbol identity mismatch")
+    if one.timeframe != "1m" or any(not candle.closed for candle in one.candles):
+        raise PilotRuntimeInputError("required native evidence is incomplete or unsupported")
+    if any(_utc(candle.timestamp_utc) > evaluation for candle in one.candles):
+        raise PilotRuntimeInputError("future evidence cannot enter Pilot input")
+    if len(one.candles) < 20:
+        raise PilotRuntimeInputError("insufficient native closed 1m evidence for the rolling 20-minute profile")
+    if _utc(one.candles[0].timestamp_utc) > evaluation - WINDOW:
+        raise PilotRuntimeInputError("native 1m evidence does not cover the rolling 20-minute window")
 
 
 def _validate_batches(
@@ -368,6 +461,10 @@ def _candidate_local_failure(symbol: str, exc: PilotRuntimeInputError) -> Candid
         return CandidateEvidenceFailure(symbol, "native_1m_evidence", str(exc), "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE")
     if "insufficient native closed 5m evidence" in message or "native 5m evidence does not cover" in message:
         return CandidateEvidenceFailure(symbol, "native_5m_evidence", str(exc), "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE")
+    if "native batch is empty" in message:
+        return CandidateEvidenceFailure(symbol, "native_evidence", str(exc), "CANDIDATE_LOCAL_INSUFFICIENT_EVIDENCE")
+    if "invalid native coinalyze" in message:
+        return CandidateEvidenceFailure(symbol, "native_evidence", str(exc), "CANDIDATE_LOCAL_MALFORMED_EVIDENCE")
     return None
 
 

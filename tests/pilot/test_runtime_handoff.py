@@ -245,9 +245,10 @@ class PilotRuntimeHandoffTests(unittest.TestCase):
             instruments=instruments(*symbols), tickers={symbol: {} for symbol in symbols},
             evaluation_timestamp_utc=NOW,
         )
-        self.assertEqual(len(preparation.candidates), 59)
+        self.assertEqual(len(preparation.candidates), 0)
+        self.assertEqual(len(preparation.stage1_non_survivors), 59)
         self.assertEqual(calls.count("/future-markets"), 1)
-        self.assertEqual(calls.count("/ohlcv-history"), 118)
+        self.assertEqual(calls.count("/ohlcv-history"), 59)
         self.assertEqual(preparation.market_resolution_provenance["market_count"], 59)
         self.assertEqual(preparation.market_resolution_provenance["endpoint"], "/future-markets")
 
@@ -271,7 +272,8 @@ class PilotRuntimeHandoffTests(unittest.TestCase):
             tickers={"ALPHAUSDT": {}, "BETAUSDT": {}}, evaluation_timestamp_utc=NOW,
         )
         self.assertEqual(calls.count("/future-markets"), 1)
-        self.assertEqual([candidate.symbol for candidate in preparation.candidates], ["BETAUSDT"])
+        self.assertEqual([candidate.symbol for candidate in preparation.candidates], [])
+        self.assertEqual([screen.instrument.symbol for screen in preparation.stage1_non_survivors], ["BETAUSDT"])
         self.assertEqual(preparation.candidate_failures[0].classification, "CANDIDATE_LOCAL_PROVIDER_SYMBOL_UNAVAILABLE")
         client.resolve_bybit_symbol("BETAUSDT")
         self.assertEqual(calls.count("/future-markets"), 2)
