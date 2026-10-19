@@ -46,6 +46,7 @@ class RankSnapshot:
     acquisition_stop_condition: str = "GLOBAL_CATALOG_COMPLETE"
     target_resolution_counts: tuple[tuple[str, int], ...] = ()
     endpoints: tuple[str, ...] = ()
+    target_rank_batches: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...] = ()
     _target_resolutions: tuple[tuple[str, RankResolution], ...] = ()
 
     def resolution_for(self, underlying: str) -> RankResolution:
@@ -113,7 +114,7 @@ class CoinGeckoMarketCapRankSource:
             else:
                 unique[key] = matches[0]
 
-        market_rows = self._fetch_target_market_rows(tuple(asset_id for asset_id, _ in unique.values()))
+        market_rows, batch_provenance = self._fetch_target_market_rows(tuple(asset_id for asset_id, _ in unique.values()))
         ranks: dict[str, int | None] = {}
         for item in market_rows:
             if not isinstance(item, dict) or not item.get("id"):
@@ -137,6 +138,7 @@ class CoinGeckoMarketCapRankSource:
             endpoint_pages=(), global_complete=False, target_sufficient=True,
             stop="TARGET_UNIVERSE_SUFFICIENT", resolutions=resolutions, counts=counts,
             endpoints=tuple(endpoint for endpoint in (self.IDENTITY_ENDPOINT, self.MARKET_ENDPOINT) if endpoint == self.IDENTITY_ENDPOINT or unique),
+            batches=batch_provenance,
         )
 
     def fetch(self) -> RankSnapshot:
@@ -155,22 +157,38 @@ class CoinGeckoMarketCapRankSource:
                     raise RankCatalogError("CoinGecko catalogue contains duplicate asset identity")
                 seen_ids.add(entry.asset_id); entries.append(entry)
             if len(payload) < self.per_page:
-                return self._snapshot(tuple(entries), tuple(pages), True, False, "GLOBAL_CATALOG_COMPLETE", {}, (), (self.MARKET_ENDPOINT,))
+                return self._snapshot(tuple(entries), tuple(pages), True, False, "GLOBAL_CATALOG_COMPLETE", {}, (), (self.MARKET_ENDPOINT,), ())
         raise RankCatalogIncompleteError(f"CoinGecko catalogue did not establish completion within {self.max_pages} pages")
 
     def _fetch_identity_catalogue(self) -> object:
         return self._request(self.IDENTITY_ENDPOINT, {})
 
-    def _fetch_target_market_rows(self, asset_ids: tuple[str, ...]) -> list[object]:
+    def _fetch_target_market_rows(self, asset_ids: tuple[str, ...]) -> tuple[list[object], tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...]]:
         rows: list[object] = []
+        batches = []
         for start in range(0, len(asset_ids), self.per_page):
-            batch = asset_ids[start:start + self.per_page]
-            if batch:
-                payload = self._request(self.MARKET_ENDPOINT, {"vs_currency": "usd", "ids": ",".join(batch), "sparkline": "false"})
-                if not isinstance(payload, list):
-                    raise RankCatalogError("CoinGecko target rank response is not a list")
-                rows.extend(payload)
-        return rows
+            batch = tuple(asset_ids[start:start + self.per_page])
+            if not batch:
+                continue
+            payload = self._request(self.MARKET_ENDPOINT, {"vs_currency": "usd", "ids": ",".join(batch), "per_page": str(len(batch)), "sparkline": "false"})
+            if not isinstance(payload, list):
+                raise RankCatalogError("CoinGecko target rank response is not a list")
+            returned: list[str] = []
+            for item in payload:
+                if not isinstance(item, dict) or not item.get("id"):
+                    raise RankCatalogError("CoinGecko target rank response contains malformed asset identity")
+                returned.append(str(item["id"]))
+            if len(returned) != len(set(returned)):
+                raise RankCatalogError("CoinGecko target rank response contains duplicate asset identity")
+            requested_set, returned_set = set(batch), set(returned)
+            missing, unexpected = tuple(sorted(requested_set - returned_set)), tuple(sorted(returned_set - requested_set))
+            batches.append((tuple(sorted(batch)), tuple(sorted(returned)), missing, unexpected))
+            if missing:
+                raise RankCatalogError("CoinGecko target rank response omitted requested asset identity")
+            if unexpected:
+                raise RankCatalogError("CoinGecko target rank response included unexpected asset identity")
+            rows.extend(payload)
+        return rows, tuple(batches)
 
     def _fetch_market_page(self, page: int) -> object:
         return self._request(self.MARKET_ENDPOINT, {"vs_currency": "usd", "order": "market_cap_desc", "per_page": str(self.per_page), "page": str(page), "sparkline": "false"})
@@ -180,10 +198,10 @@ class CoinGeckoMarketCapRankSource:
         with request.urlopen(request.Request(url, headers={"Accept": "application/json"}), timeout=self.timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def _snapshot(self, entries, endpoint_pages, global_complete, target_sufficient, stop, resolutions, counts, endpoints=()) -> RankSnapshot:
-        material = {"source": self.SOURCE, "entries": [(e.asset_id, e.symbol, e.rank) for e in entries], "endpoint_pages": endpoint_pages, "global_catalog_complete": global_complete, "target_universe_sufficient": target_sufficient, "stop": stop, "resolutions": [(k, v.state, v.entry.asset_id if v.entry else None, v.method) for k, v in sorted(resolutions.items())], "endpoints": endpoints}
+    def _snapshot(self, entries, endpoint_pages, global_complete, target_sufficient, stop, resolutions, counts, endpoints=(), batches=()) -> RankSnapshot:
+        material = {"source": self.SOURCE, "entries": [(e.asset_id, e.symbol, e.rank) for e in entries], "endpoint_pages": endpoint_pages, "global_catalog_complete": global_complete, "target_universe_sufficient": target_sufficient, "stop": stop, "resolutions": [(k, v.state, v.entry.asset_id if v.entry else None, v.method) for k, v in sorted(resolutions.items())], "endpoints": endpoints, "target_rank_batches": batches}
         digest = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
-        return RankSnapshot(self.SOURCE, datetime.now(timezone.utc), tuple(entries), digest, len(endpoint_pages), global_complete, tuple(endpoint_pages), global_complete, target_sufficient, stop, tuple(sorted(counts.items())), tuple(endpoints), tuple(sorted(resolutions.items())))
+        return RankSnapshot(self.SOURCE, datetime.now(timezone.utc), tuple(entries), digest, len(endpoint_pages), global_complete, tuple(endpoint_pages), global_complete, target_sufficient, stop, tuple(sorted(counts.items())), tuple(endpoints), tuple(batches), tuple(sorted(resolutions.items())))
 
 
 def _entry_from_market_item(item: object) -> RankEntry:

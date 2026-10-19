@@ -76,6 +76,8 @@ def evidence_payload(
             "acquisition_stop_condition": rank_snapshot.acquisition_stop_condition,
             "target_resolution_counts": dict(rank_snapshot.target_resolution_counts),
             "endpoints": list(rank_snapshot.endpoints),
+            "target_rank_batch_count": len(rank_snapshot.target_rank_batches),
+            "target_rank_batches": [{"requested_asset_ids": list(item[0]), "returned_asset_ids": list(item[1]), "missing_requested_asset_ids": list(item[2]), "unexpected_returned_asset_ids": list(item[3])} for item in rank_snapshot.target_rank_batches],
             "fetched_at_utc": _iso(rank_snapshot.fetched_at),
             "snapshot_id": rank_snapshot.snapshot_id,
             "resolved_entry": None if entry is None else {
